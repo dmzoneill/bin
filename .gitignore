@@ -5,3 +5,12 @@ cursor
 cursor-cleanup.sh
 chromedriver
 kustomize
+
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.jks
+*.cert
+credentials.json
