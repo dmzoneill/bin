@@ -176,7 +176,7 @@ EOF
 # === Create the archive with verbose output ===
 echo "Creating archive (showing archived files)..."
 cd "$HOME"
-tar -czvf "$ARCHIVE_PATH" --exclude-from="$EXCLUDE_FILE" . 2>&1 | tee /home/daoneill/Documents/backup.log
+tar -czvf "$ARCHIVE_PATH" --exclude-from="$EXCLUDE_FILE" . 2>&1 | tee "$HOME/Documents/backup.log"
 
 
 # === Upload to rclone ===

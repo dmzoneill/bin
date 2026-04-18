@@ -6,7 +6,7 @@ import json
 import weaviate
 
 # Weaviate Client setup
-client = weaviate.Client("http://localhost:8080")  # Replace with your Weaviate instance URL
+client = weaviate.Client(os.getenv("WEAVIATE_URL", "http://localhost:8080"))
 
 # Create the schema for the 'CodeSnippet' class if it doesn't exist
 schema = {

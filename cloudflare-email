@@ -29,7 +29,7 @@ def create_email_address(api_key, email, zone_id, new_address):
         {
           "type": "forward",
           "value": [
-            "dmz.oneill@gmail.com"
+            os.getenv("CLOUDFLARE_FORWARD_EMAIL", "dmz.oneill@gmail.com")
           ]
         }
       ],
@@ -75,7 +75,8 @@ def main():
 
     # Generate a random anagram and append @feeditout.online
     random_anagram = generate_anagram(args.input_string)
-    new_email_address = f"{random_anagram}@feeditout.online"
+    domain = os.getenv("CLOUDFLARE_DOMAIN", "feeditout.online")
+    new_email_address = f"{random_anagram}@{domain}"
 
     print(f"Generated Email Address: {new_email_address}")
 

@@ -9,8 +9,8 @@ import urllib
 from datetime import datetime
 
 # Define your API and repository URLs
-GITLAB_API_URL = "https://gitlab.cee.redhat.com/api/v4/commits"
-GITLAB_REPO_URL = "https://gitlab.cee.redhat.com/automation-analytics/automation-analytics-backend"
+GITLAB_API_URL = os.getenv("GITLAB_API_URL", "https://gitlab.cee.redhat.com/api/v4/commits")
+GITLAB_REPO_URL = os.getenv("GITLAB_REPO_URL", "https://gitlab.cee.redhat.com/automation-analytics/automation-analytics-backend")
 DEPLOY_CLOWDER_FILE = "data/services/insights/tower-analytics/cicd/deploy-clowder.yml"
 
 class OpenAIProvider:
@@ -66,7 +66,8 @@ def get_gitlab_commits(previous_sha):
     encoded_project_id = urllib.parse.quote_plus(project_id)
 
     # Create the URL for fetching commits with the correct repository path
-    url = f"https://gitlab.cee.redhat.com/api/v4/projects/{encoded_project_id}/repository/commits?ref_name=master&since={previous_sha}"
+    gitlab_host = GITLAB_API_URL.split("/api/")[0]
+    url = f"{gitlab_host}/api/v4/projects/{encoded_project_id}/repository/commits?ref_name=master&since={previous_sha}"
 
     headers = {
         "PRIVATE-TOKEN": os.getenv("GITLAB_API_TOKEN")

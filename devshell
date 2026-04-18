@@ -24,8 +24,8 @@ if command -v gnome-keyring-daemon >/dev/null 2>&1; then
     export SSH_AUTH_SOCK
 fi
 
-EXT_ID="wayland-effects@daoneill.github.com"
-EXT_SRC="/home/daoneill/src/wayland-effects"   # must contain metadata.json
+EXT_ID="${DEVSHELL_EXT_ID:-wayland-effects@daoneill.github.com}"
+EXT_SRC="${DEVSHELL_EXT_SRC:-$HOME/src/wayland-effects}"
 
 EXT_DIR="$XDG_DATA_HOME/gnome-shell/extensions"
 mkdir -p "$EXT_DIR"

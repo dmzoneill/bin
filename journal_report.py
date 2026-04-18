@@ -63,7 +63,7 @@ def save_logs_to_file(logs: str, filepath: str):
 def generate_prompt() -> str:
     return (
         "You are a Linux system administrator analyzing systemd journal logs from today. "
-        "The logs are hosted at the following URL: https://www.feeditout.com/journal.txt\n\n"
+        f"The logs are hosted at the following URL: {os.getenv('JOURNAL_URL', 'https://www.feeditout.com/journal.txt')}\n\n"
         "Download or assume access to the logs and produce a well-formatted HTML report "
         "summarizing issues, warnings, errors, and service failures. Group items by category "
         "using <h2> headings and <ul> lists. Focus on actionable insights, recurring patterns, "
@@ -80,7 +80,7 @@ def send_email(subject: str, html_body: str, to_address: str):
     part = MIMEText(html_body, "html")
     msg.attach(part)
 
-    with smtplib.SMTP("localhost") as server:
+    with smtplib.SMTP(os.getenv("SMTP_HOST", "localhost")) as server:
         server.sendmail(msg["From"], [to_address], msg.as_string())
 
 
@@ -89,8 +89,9 @@ def main():
         print("📥 Fetching logs...")
         logs = get_journal_logs()
 
-        print("💾 Saving logs to /home/dave/feeditout.com/journal.txt...")
-        save_logs_to_file(logs, "/home/dave/feeditout.com/journal.txt")
+        journal_path = os.getenv("JOURNAL_OUTPUT_PATH", os.path.expanduser("~/feeditout.com/journal.txt"))
+        print(f"💾 Saving logs to {journal_path}...")
+        save_logs_to_file(logs, journal_path)
 
         print("🧠 Sending prompt to OpenAI...")
         ai = OpenAIProvider()
@@ -100,7 +101,7 @@ def main():
         print("📧 Sending email...")
         today_str = datetime.now().strftime("%Y-%m-%d")
         subject = f"System Log Report - {today_str}"
-        send_email(subject, html_report, "dmz.oneill@gmail.com")
+        send_email(subject, html_report, os.getenv("REPORT_EMAIL", "dmz.oneill@gmail.com"))
 
         print("✅ Done. Email sent.")
     except Exception as e:

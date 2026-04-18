@@ -9,7 +9,7 @@ from typing import Dict, Optional
 import json
 
 # === CONFIGURATION ===
-WP_SITE = "https://www.fio.ie/wp-json/wp/v2/" # WordPress REST API URL
+WP_SITE = os.getenv("WORDPRESS_URL", "https://www.fio.ie") + "/wp-json/wp/v2/"
 USERNAME = os.getenv("WORDPRESS_USERNAME")  # WordPress username
 APPLICATION = os.getenv("WORDPRESS_APPLICATION")  # App password from WordPress
 UNSPLASH_API_KEY = os.getenv("UNSPLASH_API_KEY")
