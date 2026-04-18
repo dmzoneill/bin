@@ -1,0 +1,86 @@
+#!/usr/bin/python
+import os
+import random
+import argparse
+import requests
+
+# Function to generate a random anagram from the input string
+def generate_anagram(input_string):
+    # Convert the input string to a list of characters
+    char_list = list(input_string)
+    # Shuffle the list to create a random anagram
+    random.shuffle(char_list)
+    # Join the characters back into a string
+    return ''.join(char_list)
+
+# Function to create a new email address and set up routing
+def create_email_address(api_key, email, zone_id, new_address):
+    url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/email/routing/rules"
+
+    # Headers to pass the API key and email for authentication
+    headers = {
+        "Content-Type": "application/json",
+        "X-Auth-Email": email,
+        "X-Auth-Key": api_key
+    }
+
+    data = {
+      "actions": [
+        {
+          "type": "forward",
+          "value": [
+            "dmz.oneill@gmail.com"
+          ]
+        }
+      ],
+      "matchers": [
+        {
+          "field": "to",
+          "type": "literal",
+          "value": new_address
+        }
+      ],
+      "enabled": True,
+      "name": "Send to: " + new_address
+    }
+
+    # Sending the POST request to Cloudflare API
+    response = requests.post(url, json=data, headers=headers)
+
+    # Check the response status
+    if response.status_code == 200:
+        print("New email address created successfully.")
+        print(response.json())  # You can print the response to check the result
+    else:
+        print(f"Failed to create email address: {response.status_code}")
+        print(response.text)
+
+def main():
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Create a random anagram email address and set up routing")
+    parser.add_argument("input_string", type=str, help="The string to generate an anagram from")
+
+    args = parser.parse_args()
+
+    # Get the Cloudflare API key, email, and Zone ID from environment variables
+    api_key = os.getenv("CLOUDFLARE_API_KEY")
+    email = os.getenv("CLOUDFLARE_EMAIL")
+    zone_id = os.getenv("CLOUDFLARE_ZONE_ID")
+
+    if not api_key or not email or not zone_id:
+        raise ValueError(
+            "Missing Cloudflare credentials. Set CLOUDFLARE_API_KEY, "
+            "CLOUDFLARE_EMAIL, and CLOUDFLARE_ZONE_ID environment variables."
+        )
+
+    # Generate a random anagram and append @feeditout.online
+    random_anagram = generate_anagram(args.input_string)
+    new_email_address = f"{random_anagram}@feeditout.online"
+
+    print(f"Generated Email Address: {new_email_address}")
+
+    # Create the new email address and set up routing
+    create_email_address(api_key, email, zone_id, new_email_address)
+
+if __name__ == "__main__":
+    main()

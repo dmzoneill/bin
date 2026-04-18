@@ -1,0 +1,213 @@
+#!/usr/bin/env python
+import argparse
+import os
+import re
+import subprocess
+import sys
+
+import requests
+
+
+class OpenAIProvider:
+    def __init__(self):
+        self.api_key = os.getenv("AI_API_KEY")
+        if not self.api_key:
+            raise EnvironmentError("AI_API_KEY not set in environment.")
+        self.endpoint = "https://api.openai.com/v1/chat/completions"
+        self.model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    def generate_commit_message(self, prompt: str, text: str) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        body = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": text},
+            ],
+            "temperature": 0.3,
+        }
+
+        response = requests.post(self.endpoint, json=body, headers=headers, timeout=30)
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"].strip()
+
+        raise Exception(
+            f"OpenAI API call failed: {response.status_code} - {response.text}"
+        )
+
+
+class ClaudeProvider:
+    def __init__(self):
+        self.claude_cmd = "claude"
+
+    def generate_commit_message(self, prompt: str, text: str) -> str:
+        full_prompt = f"{prompt}\n\nHere is the git diff:\n\n{text}"
+
+        result = subprocess.run(
+            [self.claude_cmd, "--print", full_prompt],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode == 0:
+            message = result.stdout.strip()
+            # Remove markdown code fences (``` at start and end)
+            message = re.sub(r'^```[\w]*\n?', '', message)
+            message = re.sub(r'\n?```$', '', message)
+            return message.strip()
+
+        raise Exception(
+            f"Claude CLI call failed: {result.returncode} - {result.stderr}"
+        )
+
+
+class GeminiProvider:
+    def __init__(self):
+        self.gemini_cmd = "gemini"
+
+    def generate_commit_message(self, prompt: str, text: str) -> str:
+        full_prompt = f"{prompt}\n\nHere is the git diff:\n\n{text}"
+
+        result = subprocess.run(
+            [self.gemini_cmd, "-o", "text", full_prompt],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        if result.returncode == 0:
+            return result.stdout.strip()
+
+        raise Exception(
+            f"Gemini CLI call failed: {result.returncode} - {result.stderr}"
+        )
+
+
+def remove_comments_from_diff(diff: str) -> str:
+    # Remove single-line comments
+    diff = re.sub(r"#.*", "", diff)
+
+    # Remove multi-line comments (triple quotes)
+    diff = re.sub(r'("""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\')', "", diff)
+
+    # Remove comments from git diff (e.g., lines starting with '---', '+++'
+    # are part of the diff headers)
+    diff = re.sub(r"^\s*(---|\+\+\+)\s.*", "", diff, flags=re.MULTILINE)
+
+    return diff.strip()
+
+
+def get_diff_from_stdin():
+    """Reads the diff from stdin (useful for piped input)."""
+    diff = sys.stdin.read()
+    return remove_comments_from_diff(diff)
+
+
+def get_diff_from_git():
+    """Runs 'git diff HEAD' and captures the output."""
+    diff = subprocess.check_output(
+        "GIT_PAGER=cat git diff HEAD", shell=True, text=True
+    )
+    return remove_comments_from_diff(diff)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate and commit a git commit message."
+    )
+    parser.add_argument(
+        "--print",
+        action="store_true",
+        help="Print the commit message without creating the commit",
+    )
+    parser.add_argument(
+        "--provider",
+        choices=["openai", "claude", "gemini"],
+        default="claude",
+        help="AI provider to use for generating commit messages (default: claude)",
+    )
+    parser.add_argument(
+        "--prefix",
+        type=str,
+        help="Prefix to prepend to the commit message (e.g., AAP-52095)",
+    )
+    args = parser.parse_args()
+
+    cwd = os.getcwd()
+
+    diff = None
+
+    if not sys.stdin.isatty():
+        print("Reading git diff from stdin...")
+        diff = get_diff_from_stdin()
+    else:
+        print("Getting git diff from HEAD~1...")
+        diff = get_diff_from_git()
+
+    if not diff:
+        print("No diff found, nothing to commit.")
+        return
+
+    prompt = (
+        "Generate a conventional commit message in the format: "
+        "`<type>(<optional scope>): <subject>`, using present tense. "
+        "Only return the message, no preamble or explanation. "
+        "Types to choose from: feat, fix, docs, style, refactor, perf, test, chore. "
+        "Keep it concise and comply with commitlint standards"
+    )
+
+    if args.provider == "claude":
+        provider = ClaudeProvider()
+        print("Generating commit message from Claude...")
+    elif args.provider == "gemini":
+        provider = GeminiProvider()
+        print("Generating commit message from Gemini...")
+    else:
+        provider = OpenAIProvider()
+        print("Generating commit message from OpenAI...")
+
+    commit_message = provider.generate_commit_message(prompt, diff)
+
+    if not commit_message:
+        print("No commit message generated. Aborting commit.")
+        return
+
+    # Ask for prefix if not provided via command line
+    prefix = args.prefix
+    if not prefix:
+        prefix = input("Enter commit prefix (e.g., AAP-52095) or press Enter to skip: ").strip()
+
+    # Prepend prefix to the first line only if provided
+    if prefix:
+        lines = commit_message.split('\n', 1)
+        first_line = f"{prefix} - {lines[0]}"
+        if len(lines) > 1:
+            commit_message = f"{first_line}\n{lines[1]}"
+        else:
+            commit_message = first_line
+
+    if args.print:
+        print(f"Commit message (not committing): {commit_message}")
+        return
+
+    print(f"Committing with message: {commit_message}")
+
+    result = subprocess.run(
+        ["git", "commit", "-m", commit_message],
+        check=True,
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    print(f"Commit successful! {result.stdout.decode('utf-8')}")
+
+
+if __name__ == "__main__":
+    main()

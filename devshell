@@ -1,0 +1,40 @@
+#!/bin/bash
+set -e
+
+# Isolated config and extensions for dev shell
+export XDG_DATA_HOME="/tmp/gnome-dev-$USER"
+export GSETTINGS_BACKEND=memory
+export GTK_A11Y=none
+export GTK_USE_PORTAL=0
+
+# Minimal monitor config for a larger virtual screen
+MONITOR_CFG="$XDG_DATA_HOME/mutter-devkit-monitor.ini"
+mkdir -p "$(dirname "$MONITOR_CFG")"
+cat > "$MONITOR_CFG" <<EOF
+[monitor-0]
+width=2560
+height=1600
+refresh-rate=60000
+EOF
+export MUTTER_DEBUG_DUMMY_MONITOR_CONFIG="$MONITOR_CFG"
+
+# Optional: satisfy org.freedesktop.secrets so portals stop timing out
+if command -v gnome-keyring-daemon >/dev/null 2>&1; then
+    eval "$(gnome-keyring-daemon --start --components=secrets)" || true
+    export SSH_AUTH_SOCK
+fi
+
+EXT_ID="wayland-effects@daoneill.github.com"
+EXT_SRC="/home/daoneill/src/wayland-effects"   # must contain metadata.json
+
+EXT_DIR="$XDG_DATA_HOME/gnome-shell/extensions"
+mkdir -p "$EXT_DIR"
+rm -rf "$EXT_DIR/$EXT_ID"
+ln -s "$EXT_SRC" "$EXT_DIR/$EXT_ID"
+
+# Kill any old devkit session
+pkill -f "gnome-shell --devkit" 2>/dev/null || true
+
+# Start nested GNOME Shell devkit
+exec dbus-run-session gnome-shell --devkit --wayland
+

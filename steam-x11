@@ -1,0 +1,6 @@
+#!/usr/bin/bash
+export STEAM_DISABLE_WAYLAND=1
+export GDK_BACKEND=x11
+export SDL_VIDEODRIVER=x11
+export QT_QPA_PLATFORM=xcb
+exec steam "$@"

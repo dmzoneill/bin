@@ -1,0 +1,107 @@
+#!/usr/bin/python3
+import os
+import openai
+import hashlib
+import json
+import weaviate
+
+# Weaviate Client setup
+client = weaviate.Client("http://localhost:8080")  # Replace with your Weaviate instance URL
+
+# Create the schema for the 'CodeSnippet' class if it doesn't exist
+schema = {
+    "class": "CodeSnippet",
+    "properties": [
+        {"name": "code", "dataType": ["text"]},
+        {"name": "vector", "dataType": ["number[]"]}
+    ]
+}
+
+# Check if the class exists, and create it if not
+existing_classes = client.schema.get()["classes"]
+if not any(cls["class"] == "CodeSnippet" for cls in existing_classes):
+    client.schema.create_class(schema)
+    print("Created 'CodeSnippet' class in Weaviate.")
+
+# Set OpenAI API key
+openai.api_key = os.getenv("OPENAI_API_KEY")  # Make sure you set the OpenAI API key
+
+# Load the cache from the JSON file (if it exists)
+cache_file = "weaviate-cache.json"
+if os.path.exists(cache_file):
+    with open(cache_file, "r") as f:
+        cache = json.load(f)
+else:
+    cache = {}
+
+# Function to get embeddings using OpenAI
+def get_embeddings(text):
+    if not text.strip():  # Check if text is empty or contains only whitespace
+        raise ValueError("Input text cannot be empty.")
+    
+    response = openai.Embedding.create(input=[text], model="text-embedding-ada-002")
+    return response['data'][0]['embedding']
+
+# Function to compute the digest (hash) of a file's contents
+def get_file_digest(file_path):
+    sha256 = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        while chunk := f.read(8192):
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
+# Get the current working directory
+codebase_dir = os.getcwd()
+print(f"Using codebase from: {codebase_dir}")
+
+# Read and upload the code, while checking the file digest
+for root, dirs, files in os.walk(codebase_dir):
+    for file in files:
+        if file.endswith(".py"):  # or whatever file types you're working with
+            file_path = os.path.join(root, file)
+
+            # Calculate the file digest
+            file_digest = get_file_digest(file_path)
+
+            # Check if the file has been processed before and if the digest has changed
+            if file_path in cache and cache[file_path] == file_digest:
+                print(f"Skipping {file_path}: No changes detected.")
+                continue  # Skip this file if it hasn't changed
+
+            # Process the file: read the content and generate embeddings
+            with open(file_path, "r") as f:
+                code = f.read()
+
+            try:
+                # Generate an embedding for the entire file or each function/class
+                embedding = get_embeddings(code)
+                metadata = {"file": file_path, "text": code}  # Include the raw text as metadata
+
+                # Create the data object for Weaviate
+                data_object = {
+                    "code": code,
+                    "vector": embedding
+                }
+
+                # Upload the code and its embedding to Weaviate
+                client.data_object.create(data_object, "CodeSnippet")
+
+                # Update the cache with the new digest
+                cache[file_path] = file_digest
+                print(f"Processed and uploaded {file_path}")
+
+            except ValueError as e:
+                # Handle specific ValueError (e.g., empty text) and continue with the next file
+                print(f"Skipping {file_path}: {e}")
+            except Exception as e:
+                # Handle any other exceptions that may arise and continue with the next file
+                print(f"Error processing {file_path}: {e}")
+
+# Save the updated cache back to the JSON file
+with open(cache_file, "w") as f:
+    json.dump(cache, f, indent=4)
+
+# Query Weaviate with an embedding
+query_embedding = get_embeddings("list issues")
+result = client.query.get("CodeSnippet", ["code"]).with_near_vector({"vector": query_embedding, "certainty": 0.8}).do()
+print(result)

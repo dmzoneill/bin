@@ -1,0 +1,788 @@
+#!/usr/bin/env python
+"""
+This script automates the generation and publication of blog posts on a WordPress site from source code files.
+It leverages the OpenAI API to enhance the text and generate descriptions while identifying programming languages based
+on file extensions.
+
+Key features include:
+- Command-line argument parsing for file or directory paths.
+- Reading source code files to create blog post prompts.
+- Utilizing OpenAI to improve text and generate HTML formatted blog content.
+- Fetching or creating tags and categories in WordPress based on detected programming languages.
+- Publishing posts on WordPress with generated content, titles, and excerpts.
+
+Environment variables required for operation:
+- WORDPRESS_URL: Base URL of the WordPress site.
+- WORDPRESS_USERNAME: Username for WordPress authentication.
+- WORDPRESS_PASSWORD: Password for WordPress authentication.
+- WORDPRESS_APPLICATION: Application name for WordPress authentication.
+- AI_API_KEY: API key for OpenAI.
+- AI_MODEL: Model name for OpenAI API.
+
+The script can be executed from the command line, specifying a path to a file or directory containing source code, with
+an optional input string for customizing the blog post content.
+"""
+import argparse
+import base64
+import datetime
+import os
+import re
+import sys
+from typing import Dict, List, Optional, Tuple
+
+import requests
+
+WORDPRESS_URL: str = os.getenv("WORDPRESS_URL")
+WORDPRESS_USERNAME: str = os.getenv("WORDPRESS_USERNAME")
+WORDPRESS_PASSWORD: str = os.getenv("WORDPRESS_PASSWORD")
+WORDPRESS_APPLICATION: str = os.getenv("WORDPRESS_APPLICATION")
+
+# Map file extensions to programming languages
+EXTENSION_LANGUAGE_MAP: Dict[str, str] = {
+    ".py": "Python",
+    ".js": "JavaScript",
+    ".java": "Java",
+    ".cpp": "C++",
+    ".c": "C",
+    ".cs": "C#",
+    ".rb": "Ruby",
+    ".php": "PHP",
+    ".html": "HTML",
+    ".css": "CSS",
+    ".go": "Go",
+    ".ts": "TypeScript",
+    ".sh": "Shell",
+    ".rs": "Rust",
+    ".swift": "Swift",
+    ".kt": "Kotlin",
+    ".pl": "Perl",
+    ".r": "R",
+    ".dart": "Dart",
+    ".scala": "Scala",
+    ".lua": "Lua",
+    ".sql": "SQL",
+    ".yaml": "YAML",
+    ".json": "JSON",
+}
+
+
+system_prompt: str = """
+Please generate a blog post based on the provided source code.
+The content should be formatted in **HTML for WordPress**, not markdown.
+
+Make sure the **Title** is always placed at the top and follows this format:
+<h1>Title: some title</h1>. This should be the very first line of the blog post.
+
+Then, proceed to generate the rest of the content in a personal and relatable style,
+using **HTML tags** for formatting (like <p>, <ul>, <li>, etc.) and avoiding markdown
+formatting (like **bold**, *italic*, etc.). Keep the tone friendly,
+simple, and easy to read, with clear structure. Do not use markdown syntax.
+
+1. **Summarize the code**
+    Start with a simple summary of the solution, its function and how it works.
+
+2. **Post the code in a code block**
+    Make sure the code block is compatible with WordPress.
+    Use the <pre> and <code> tags to format the code. e.g:
+    <pre><code class="language-css">p { color: red }</code></pre>
+    Make sure the class is compatible with prism js highlighter
+
+3. **Explain the code**
+    Provide a detailed explanation of the code, including its purpose,
+    how it works, and any important details or considerations.
+
+4. ** instead of sending all the code back, just send
+    <pre><code class="language-css"># File: the filename you were given #</code></pre>
+    if there is more than 1 file in the input, then just put another code block at
+    the apprpriate place in the post.
+    <pre><code class="language-css"># File: the filename you were given #</code></pre>
+
+**Post Format:**
+
+- **Start with a Title**
+    Ensure the **Title** is the first line and follows the format Title: some title.
+
+- **HTML Format for WordPress**
+    Make sure the content is ready to go for WordPress. Skip any HTML comments (no <!-- comment -->),
+    and make sure the links are valid, including for images or GitHub references.
+    If there’s an image in the README, include that in the post if it fits!
+
+- **Keep It Real**
+    The tone should feel like you’re sharing the update with a friend—nothing too formal or
+    too grandiose. If the changes are small (like updating a TODO file), let people know that
+    the update is more about cleaning things up than adding huge new features.
+
+- **Media*
+    At the end of the post it's important to include the following 2 items.
+    Below is an example of the 2 items, "image_idea" and "youtube_topics".
+    Replace the values as necessary with the instructions provided. 
+    Dont add any html formatting to these items.
+    Example:
+        image_idea: A clear idea of a visual related to the topic
+        youtube_topics: topic for first video, topic for second video
+
+The key is to make the post feel like a casual, friendly update, rather than a corporate announcement.
+Let people know what changed, why it matters, and how it will affect them—but keep it laid-back and easy to read.
+"""
+
+
+class OpenAIProvider:  # pylint: disable=too-few-public-methods
+    """
+    This class provides a way to interact with the OpenAI API for text completion tasks.
+
+    Attributes:
+    - api_key (str): The API key used for authentication with the OpenAI API.
+    - endpoint (str): The URL endpoint for making requests to the OpenAI API.
+    - model (str): The model identifier used for text completion tasks.
+
+    Methods:
+    - improve_text(prompt: str, text: str) -> str: Sends a text completion request to the OpenAI API using the provided
+    prompt and text, and returns the improved text response.
+    """
+
+    def __init__(self) -> None:
+        """
+        Initialize the API key, endpoint, and model for OpenAI chat completions.
+
+        Arguments:
+        - self: The object instance.
+        """
+        self.api_key: str = os.getenv("AI_API_KEY")
+        self.endpoint: str = "https://api.openai.com/v1/chat/completions"
+        self.model: str = os.getenv("AI_MODEL")
+
+    def improve_text(self, prompt: str, text: str) -> str:
+        """
+        Improve the given text by providing a more coherent response using the OpenAI API.
+
+        Arguments:
+        - prompt (str): The prompt to be used for generating a response.
+        - text (str): The original text that needs improvement.
+
+        Return:
+        - str: The improved text generated by the OpenAI API.
+
+        Exceptions:
+        - requests.exceptions.RequestException: Raised for any request-related exceptions like network issues or
+        timeouts.
+        """
+        headers: Dict[str, str] = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        body: Dict = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": text},
+            ],
+            "temperature": 0.4,
+        }
+
+        try:
+            # Make the API request
+            response: requests.Response = requests.post(
+                self.endpoint, json=body, headers=headers, timeout=120
+            )
+
+            # Check for successful response
+            if response.status_code == 200:
+                return response.json()[
+                    "choices"][0]["message"]["content"].strip()
+
+            # If the request fails, raise an error with the response details
+            print(
+                f"OpenAI API call failed: {response.status_code} - {response.text}")
+            sys.exit(1)
+        except requests.exceptions.RequestException as e:
+            # Catch any request-related exceptions (e.g., network issues,
+            # timeouts)
+            print(f"Request failed: {str(e)}")
+            sys.exit(1)
+
+
+def determine_languages_from_files(files: List[str]) -> List[str]:
+    """
+    Determine the programming languages used in the provided files based on their extensions.
+
+    :param files: List of file paths
+    :return: List of unique programming languages
+    """
+    languages: set[str] = set()
+    for file_path in files:
+        _, ext = os.path.splitext(file_path)
+        if ext in EXTENSION_LANGUAGE_MAP:
+            languages.add(EXTENSION_LANGUAGE_MAP[ext])
+    return list(languages)
+
+
+def get_publish_date() -> str:
+    """
+    Get the current date and time in ISO 8601 format for the publish date.
+
+    :return: String representing the current date and time in ISO 8601 format
+    """
+    return datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def clean_html_code_block(content: str) -> str:
+    """
+    Remove code block delimiters from the given content.
+
+    Arguments:
+    - content (str): A string containing HTML code block delimiters.
+
+    Return:
+    - str: The content with the start and end of code block delimiters removed.
+    """
+    # Remove start of code block
+    content = re.sub(r"^```.*?$", "", content, flags=re.MULTILINE)
+    content = re.sub(r"```$", "", content)  # Remove end of code block
+    return content
+
+
+def strip_html_tags(text: str) -> str:
+    """
+    Remove HTML tags from the input text.
+
+    Arguments:
+    - text (str): A string containing HTML tags that need to be stripped.
+
+    Return:
+    - str: The input text with all HTML tags removed.
+    """
+    return re.sub(r"<[^>]*>", "", text)
+
+
+def generate_description(prompt: str) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Generate a blog post description based on a provided source code prompt.
+
+    Arguments:
+    - prompt (str): The source code prompt to generate a blog post from.
+
+    Return:
+    - tuple: A tuple containing the title and description of the generated blog post.
+    Returns (None, None) if an error occurs during the generation process.
+    """
+    user_prompt: str = prompt
+    ai_provider: OpenAIProvider = OpenAIProvider()
+
+
+    try:
+        response: str = ai_provider.improve_text(system_prompt, user_prompt)
+
+        print(system_prompt)
+        print(response)
+
+        title_match: Optional[re.Match] = re.search(
+            r"Title:\s*(.*)", response
+        )  # Match the title
+        if title_match:
+            title: str = title_match.group(1).strip()
+            description: str = re.sub(r"Title:\s*.*\n", "", response).strip()
+            return title, description
+        title: str = clean_html_code_block(
+            response.strip()).strip().splitlines()[0]
+        return strip_html_tags(title), response.strip()
+
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"Error generating description: {e}")
+        return None, None
+
+
+def get_or_create_tags(tags: List[str]) -> List[int]:
+    """
+    Retrieve existing tag IDs from a WordPress site or create new tags if they do not exist.
+
+    Arguments:
+    - tags (list): A list of strings representing the names of tags to retrieve or create.
+
+    Return:
+    - list: A list of integers containing the IDs of the existing or newly created tags.
+    """
+    tag_ids: List[int] = []
+    tags_url: str = f"{WORDPRESS_URL}tags"
+    headers: Dict[str, str] = {
+        "Content-Type": "application/json",
+        "Authorization": f'Basic {base64.b64encode(f"{WORDPRESS_USERNAME}:{WORDPRESS_APPLICATION}".encode()).decode()}',
+    }
+
+    response: requests.Response = requests.get(
+        tags_url, headers=headers, params={"page": 1, "per_page": 100}, timeout=30
+    )
+    if response.status_code == 200:
+        existing_tags: List[Dict[str, str]] = response.json()
+        existing_tag_names: Dict[str, int] = {
+            tag["name"].lower(): tag["id"] for tag in existing_tags
+        }
+
+        for tag in tags:
+            tag_lower: str = tag.lower()
+            if tag_lower in existing_tag_names:
+                tag_ids.append(existing_tag_names[tag_lower])
+            else:
+                create_tag_url: str = f"{WORDPRESS_URL}tags"
+                create_tag_data: Dict[str, str] = {"name": tag}
+                create_response: requests.Response = requests.post(
+                    create_tag_url, json=create_tag_data, headers=headers, timeout=30
+                )
+                if create_response.status_code == 201:
+                    new_tag: Dict[str, int] = create_response.json()
+                    tag_ids.append(new_tag["id"])
+                else:
+                    print(f"Failed to create tag '{tag}'.")
+    else:
+        print(f"Failed to fetch tags. Status code: {response.status_code}")
+
+    return tag_ids
+
+
+def get_category_id(languages: List[str],
+                    categories: List[Dict[str, str]]) -> int:
+    """
+    Get the category ID based on the provided programming languages and categories.
+
+    Arguments:
+    - languages (list): A list of programming languages to search for.
+    - categories (list): A list of dictionaries representing categories with "name" and "id" keys.
+
+    Return:
+    - int: The ID of the category that matches any of the provided programming languages.
+    """
+    category_id: int = 0
+
+    # Loop through each category and check if any category name matches the
+    # programming languages
+    for category in categories:
+        for language in languages:
+            if language.lower() == category["name"].lower():
+                category_id = category["id"]
+                break
+
+    return category_id
+
+
+def search_image_url_unsplash(query: str, api_key: str) -> Optional[str]:
+    url = "https://api.unsplash.com/search/photos"
+    headers = {
+        "Accept-Version": "v1",
+        "Authorization": f"Client-ID {api_key}"
+    }
+    params = {
+        "query": query,
+        "orientation": "landscape",
+        "per_page": 1
+    }
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        if data["results"]:
+            return data["results"][0]["urls"]["regular"]
+    else:
+        print(f"Unsplash API error: {response.status_code} - {response.text}")
+    return None
+
+
+def upload_image_to_wordpress(image_url: str, image_name: str) -> Optional[str]:
+    try:
+        img_data = requests.get(image_url).content
+        media_url = f"{WORDPRESS_URL}media"
+        headers = {
+            "Content-Disposition": f"attachment; filename={image_name}",
+            "Content-Type": "image/jpeg",
+            "Authorization": f'Basic {base64.b64encode(f"{WORDPRESS_USERNAME}:{WORDPRESS_APPLICATION}".encode()).decode()}',
+        }
+        response = requests.post(media_url, headers=headers, data=img_data)
+        if response.status_code == 201:
+            return response.json().get("source_url")
+        else:
+            print(f"WordPress upload failed: {response.status_code} - {response.text}")
+    except Exception as e:
+        print(f"Image upload failed: {e}")
+    return None
+
+
+def generate_description_with_media(prompt: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[List[str]]]:
+    ai_provider = OpenAIProvider()
+
+    response = ai_provider.improve_text(system_prompt, prompt)
+
+    # Use regex to extract image_idea and youtube_topics
+    image_match = re.search(r"<p>image_idea:\s*(.*?)</p>$", response, re.MULTILINE)
+    youtube_match = re.search(r"<p>youtube_topics:\s*(.*?)</p>$", response, re.MULTILINE)
+
+    image_idea = None
+    youtube_topics = []
+
+    print("=== generate_description_with_media ===")
+    print(response)
+
+    # Extract image_idea if match is found
+    if image_match:
+        image_idea = image_match.group(1).strip()
+    else:
+        print("No image_idea found in the response.")
+
+    # Extract youtube_topics if match is found
+    if youtube_match:
+        youtube_topics_raw = youtube_match.group(1).strip()
+        youtube_topics = [topic.strip() for topic in youtube_topics_raw.split(",")]
+    else:
+        print("No youtube_topics found in the response.")
+
+    # Remove the media-related lines from the response to get the content
+    if image_match:
+        response = response[:image_match.start()].strip()
+
+    # Extract the title from the response
+    title_match = re.search(r"Title:\s*(.*)", response)
+    if title_match:
+        title = title_match.group(1).strip()
+        content = re.sub(r"Title:\s*.*\n", "", response).strip()
+        return title, content, image_idea, youtube_topics
+
+    return None, response, image_idea, youtube_topics
+
+def search_youtube_video(topic: str, api_key: str) -> Optional[str]:
+    url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "part": "snippet",
+        "q": topic,
+        "type": "video",
+        "maxResults": 1,
+        "videoEmbeddable": "true",
+        "key": api_key
+    }
+    response = requests.get(url, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        if data["items"]:
+            return f"https://www.youtube.com/embed/{data['items'][0]['id']['videoId']}"
+    return None
+
+
+def append_enrichment_to_post(content: str, video_url: Optional[str]) -> str:
+    enrichment = ""
+    if video_url:
+        enrichment = "\n\n<hr><h2>📚 Further Learning</h2>\n"
+        enrichment += f'<p>🎥 Watch this video for more:</p>\n<iframe width="710" height="415" src="{video_url}" frameborder="0" allowfullscreen></iframe>\n'
+    return content + enrichment
+
+
+def search_image_url_unsplash(query: str, api_key: str) -> Optional[str]:
+    url = "https://api.unsplash.com/search/photos"
+    headers = {"Authorization": f"Client-ID {api_key}"}
+    params = {"query": query, "per_page": 1, "orientation": "landscape"}
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code == 200:
+        data = response.json()
+        if data["results"]:
+            return data["results"][0]["urls"]["regular"]
+    return None
+
+
+def create_wordpress_post(
+    title: str, content: str, excerpt: str, files: List[str], featured_image_url: Optional[str] = None
+) -> Optional[Dict]:
+    """
+    Creates a WordPress post with the provided title, content, excerpt, and files.
+
+    Arguments:
+    - title (str): The title of the WordPress post.
+    - content (str): The content of the WordPress post.
+    - excerpt (str): The excerpt of the WordPress post.
+    - files (list): List of files to determine programming languages.
+
+    Return:
+    - dict or None: A dictionary containing the response data if the post is successfully created, otherwise None.
+
+    Exceptions:
+    - requests.exceptions.RequestException: If an error occurs during the HTTP request.
+    """
+    # pylint: disable=too-many-locals
+    url: str = f"{WORDPRESS_URL}posts"
+    creds: str = f"{WORDPRESS_USERNAME}:{WORDPRESS_APPLICATION}".encode()
+    creds: str = base64.b64encode(creds).decode("utf-8")
+    headers: Dict[str, str] = {
+        "Content-Type": "application/json",
+        "Authorization": f"Basic {creds}",
+    }
+
+    # Determine languages from the provided files
+    languages: List[str] = determine_languages_from_files(files)
+    if not languages:
+        print("No programming languages detected in the provided files.")
+        return None
+
+    # Get tags and categories
+    tag_ids: List[int] = get_or_create_tags(languages)
+    categories_url: str = f"{WORDPRESS_URL}categories"
+    response: requests.Response = requests.get(
+        categories_url, headers=headers, params={"page": 1, "per_page": 100}, timeout=30
+    )
+    category_id: int = 0
+    if response.status_code == 200:
+        categories: List[Dict[str, str]] = response.json()
+        category_id = get_category_id(languages, categories)
+
+        if not category_id:
+            print("No matching categories found. Using default category.")
+
+    # Clean and prepare content
+    clean_content: str = clean_html_code_block(content)
+
+    for file_path in files:
+        try:
+            # Read the content of the file
+            with open(file_path, "r", encoding="utf-8") as file:
+                content: str = file.read()
+
+            # Add the file name and content to the prompt
+            search = f"# File: {os.path.basename(file_path)}"
+            clean_content = clean_content.replace(search, "\n" + content + "\n")
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            print(f"Error reading file {file_path}: {e}")
+            continue
+
+    title: str = strip_html_tags(clean_html_code_block(title))
+    excerpt: str = strip_html_tags(clean_html_code_block(excerpt))
+
+    # Get the current publish date
+    publish_date: str = get_publish_date()
+
+    post_data: Dict[str, str] = {
+        "title": title,
+        "content": clean_content,
+        "status": "publish",
+        "date": publish_date,
+        "excerpt": excerpt,
+        "slug": title.replace(" ", "-").lower(),
+        "tags": tag_ids,
+        "categories": category_id,
+    }
+
+    # If a featured image URL is provided, upload it and set it as the featured image
+    if featured_image_url:
+        try:
+            img_data = requests.get(featured_image_url).content
+            media_url = f"{WORDPRESS_URL}media"
+            media_headers = {
+                "Content-Disposition": f"attachment; filename={title}.jpg",
+                "Content-Type": "image/jpeg",
+                "Authorization": f"Basic {creds}",
+            }
+            media_response = requests.post(media_url, headers=media_headers, data=img_data)
+            if media_response.status_code == 201:
+                media_id = media_response.json().get("id")
+                if media_id:
+                    post_data["featured_media"] = media_id
+                    post_data["content"] = post_data["content"].replace(
+                        "FEATURED_IMAGE_PLACEHOLDER", media_response.json().get("source_url")
+                    )
+            else:
+                print(f"Failed to upload featured image: {media_response.status_code} - {media_response.text}")
+        except Exception as e:
+            print(f"Error uploading featured image: {e}")
+
+    try:
+        response: requests.Response = requests.post(
+            url, json=post_data, headers=headers, timeout=30
+        )
+        if response.status_code == 201:
+            print(f"Post created successfully! URL: {response.json()['link']}")
+            return response.json()
+        print(f"Failed to create post. Status Code: {response.status_code}")
+        return None
+
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed: {str(e)}")
+        return None
+
+
+def generate_blog_post_prompt(
+    files: List[str], optional_input: Optional[str] = None
+) -> str:
+    """
+    Generate a blog post prompt based on the content of the provided files and optional input.
+
+    Arguments:
+    - files (list): A list of file paths containing the source code for the blog post.
+    - optional_input (str, optional): Additional input to be included in the prompt. Defaults to None.
+
+    Return:
+    - str: A formatted prompt for generating a blog post, including the content of the files and optional input.
+
+    The function reads the content of each file in the provided list of file paths, adds the file name and content to
+    the prompt, and formats the prompt for generating a blog post. If an optional input is provided, it is included in
+    the prompt as well. The function also handles exceptions that may occur while reading files.
+
+    Side Effects:
+    - May print error messages if there are issues reading files.
+    """
+    prompt: str = "Generate a blog post from the below source code:\n\n"
+
+    for file_path in files:
+        try:
+            # Read the content of the file
+            with open(file_path, "r", encoding="utf-8") as file:
+                content: str = file.read()
+
+            # Add the file name and content to the prompt
+            prompt += f"File: {os.path.basename(file_path)}\n"
+            prompt += f"Content:\n{content}\n\n"
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            print(f"Error reading file {file_path}: {e}")
+            continue
+
+    prompt += "The content should be formatted in HTML for WordPress, not markdown.\n"
+
+    if optional_input:
+        prompt += f"\n\n{optional_input}\n"
+
+    return prompt
+
+
+def get_files_from_path(file_or_folder_path: str) -> List[str]:
+    """
+    Create an array of file paths from the given path.
+    If it's a file, return an array with a single entry.
+    If it's a directory, return an array of file paths recursively.
+
+    :param file_or_folder_path: Path to a file or directory
+    :return: List of file paths
+    :raises ValueError: If the provided path is neither a file nor a directory
+    """
+    if os.path.isfile(file_or_folder_path):
+        # If it's a file, return a list with a single entry
+        return [file_or_folder_path]
+
+    if os.path.isdir(file_or_folder_path):
+        # If it's a directory, walk through it recursively and collect file
+        # paths
+        file_paths: List[str] = []
+        for root, _, files in os.walk(file_or_folder_path):
+            for file in files:
+                file_paths.append(os.path.join(root, file))
+        return file_paths
+
+    print(
+        f"The path '{file_or_folder_path}' is neither a file nor a directory.")
+    sys.exit(1)
+
+
+def parse_arguments() -> argparse.Namespace:
+    """
+    Parse command-line arguments for the script.
+
+    Arguments:
+    - No arguments needed.
+
+    Return:
+    - Returns the parsed command-line arguments as an argparse Namespace object.
+    """
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
+        description="Process a file or directory and an optional input string."
+    )
+    parser.add_argument("path", type=str, help="Path to a file or directory.")
+    parser.add_argument(
+        "--input", type=str, help="Optional input string.", default=None
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    """
+    This function serves as the main entry point for processing a file or directory path, generating a blog post
+    prompt, utilizing OpenAI to generate a title and description, preparing an SEO excerpt, and creating a WordPress
+    post based on the processed data.
+
+    Arguments:
+    - No arguments are passed directly to the function. However, the function relies on the following components:
+    - Command-line arguments obtained by parsing arguments using 'parse_arguments()'.
+    - 'file_or_dir_path': Represents the path (file or directory) obtained from the parsed arguments.
+    - 'optional_input': Represents an optional input string obtained from the parsed arguments.
+    - 'files': A list of files obtained from the path using 'get_files_from_path()'.
+    - 'prompt': A blog post prompt generated based on the files and optional input.
+    - 'title': The title of the blog post generated using OpenAI.
+    - 'description': The description of the blog post generated using OpenAI.
+    - 'excerpt': The SEO excerpt derived from the description.
+    - 'post_response': Response from creating a WordPress post using 'create_wordpress_post()'.
+
+    Return:
+    - No explicit return value. The function prints out various processing steps and outcomes.
+
+    Exceptions:
+    - Any exceptions raised during the main processing are caught and printed with a generic error message.
+
+    Side Effects:
+    - The function interacts with external services for generating blog content and creating a WordPress post.
+    - It prints out information related to the processing steps and outcomes.
+    """
+    unsplash_key = os.getenv("UNSPLASH_ACCESS_KEY")
+    youtube_key = os.getenv("YOUTUBE_API")
+
+    # Parse command-line arguments
+    args: argparse.Namespace = parse_arguments()
+    file_or_dir_path: str = args.path
+    optional_input: Optional[str] = args.input
+
+    print(f"Processing path: {file_or_dir_path}")
+    if optional_input:
+        print(f"Optional input string: {optional_input}")
+
+    files: List[str] = get_files_from_path(file_or_dir_path)
+
+    prompt: str = generate_blog_post_prompt(files, optional_input)
+
+    # Generate description using OpenAI
+    title: Optional[str]
+    description: Optional[str]
+    image_idea: Optional[str]
+    youtube_topics: Optional[str]
+
+    # Generate content with media
+    title, description, image_idea, youtube_topics = generate_description_with_media(prompt)
+
+    print(title)
+    print(image_idea)
+    print(youtube_topics)
+
+    if(not title or not description):
+        print("Error generating title/description.")
+        sys.exit(1)
+
+    # Prepare the SEO excerpt
+    excerpt: str = strip_html_tags(clean_html_code_block(description)).strip()
+    # Use the first 150 characters as an SEO excerpt
+    excerpt = excerpt[:150].strip()
+    # Search image
+    image_url = None
+    if image_idea and unsplash_key:
+        raw_img_url = search_image_url_unsplash(image_idea, unsplash_key)
+        if raw_img_url:
+            image_url = upload_image_to_wordpress(raw_img_url, title + ".jpg")
+
+    # Search YouTube
+    video_url = None
+    if youtube_topics and youtube_key:
+        for topic in youtube_topics:
+            video_url = search_youtube_video(topic, youtube_key)
+            if video_url:
+                break
+    # Append enrichment
+    description = append_enrichment_to_post(description, video_url)
+
+    # Create WordPress post
+    post_response: Optional[Dict] = create_wordpress_post(
+        title, description, excerpt, files, featured_image_url=image_url
+    )
+    if post_response:
+        print("Created post")
+    else:
+        print("Failed to create post")
+
+
+if __name__ == "__main__":
+    main()

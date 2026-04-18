@@ -1,0 +1,112 @@
+#!/usr/bin/python3
+import os
+import sys
+import requests
+import argparse
+import re
+from pinecone import Pinecone
+
+
+class OpenAIProvider:
+    def __init__(self):
+        self.api_key = os.getenv("AI_API_KEY")
+        if not self.api_key:
+            raise EnvironmentError("AI_API_KEY not set in environment.")
+        self.endpoint = "https://api.openai.com/v1/chat/completions"  # Endpoint for chat-based models
+        self.embedding_endpoint = "https://api.openai.com/v1/embeddings"  # Endpoint for embeddings
+
+    def ask(self, model: str, system: str, user: str) -> str:
+        """Ask a question to the specified model."""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        body = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.8,
+        }
+
+        response = requests.post(self.endpoint, json=body, headers=headers, timeout=120)
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"].strip()
+
+        raise Exception(f"OpenAI API call failed: {response.status_code} - {response.text}")
+
+    def get_embeddings(self, text: str) -> list:
+        """Get embeddings for a given text."""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        body = {
+            "model": "text-embedding-ada-002",  # Model for embeddings
+            "input": text,
+        }
+
+        response = requests.post(self.embedding_endpoint, json=body, headers=headers, timeout=120)
+        if response.status_code == 200:
+            return response.json()["data"][0]["embedding"]
+
+        raise Exception(f"Embedding API call failed: {response.status_code} - {response.text}")
+
+
+# Pinecone initialization
+pinecone_api_key = os.getenv("PINECONE_API_KEY")
+if not pinecone_api_key:
+    print("Pinecone API key is missing. Please set PINECONE_API_KEY.")
+    sys.exit(1)
+
+# Set Pinecone client
+pc = Pinecone(api_key=pinecone_api_key, environment="us-east-1")
+
+# Parse command-line arguments for query text and OpenAI question
+parser = argparse.ArgumentParser(description="Query the Pinecone index and interact with OpenAI.")
+parser.add_argument("pinecone_query", type=str, help="The query text to search for in the Pinecone index.")
+args = parser.parse_args()
+
+# Prepare Pinecone index name based on current working directory
+index_name = os.path.basename(os.getcwd()).replace("_", "-")
+
+# Use Pinecone to initialize the index
+index = pc.Index(name=index_name)
+
+# Create the OpenAI client instance
+client = OpenAIProvider()
+
+# Generate the query embedding using OpenAI
+query_vector = client.get_embeddings(args.pinecone_query)
+
+# Perform a vector search on the Pinecone index
+results = index.query(vector=query_vector, top_k=10, include_metadata=True)
+
+# Display search results and process them with OpenAI (optional)
+if results['matches']:
+    print("Top 5 results from Pinecone:")
+
+    # Prepare the combined prompt with all the matches
+    matches_with_info = ""
+    for i, result in enumerate(results['matches']):
+        match_text = result['metadata'].get('text', None)
+        file_info = result['metadata'].get('file', 'No file info')
+
+        # If no text is available in metadata, attempt to read from the file
+        if match_text is None:
+            file_path = result['metadata'].get('file', '')
+            if file_path and os.path.exists(file_path):
+                try:
+                    with open(file_path, 'r') as file:
+                        match_text = file.read()
+                except Exception as e:
+                    print(f"Error reading file {file_path}: {e}")
+                    match_text = "No text available in file."
+            else:
+                match_text = "No file or text available."
+
+        matches_with_info += f"Match {i+1}: File: {file_info}\nText: {match_text}\n\n"
+    print(matches_with_info)
