@@ -7,7 +7,7 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-from binlib import journal_openai
+from binlib import OpenAIError, journal_openai
 
 
 def get_journal_logs() -> str:
@@ -71,7 +71,17 @@ def main() -> None:
             subject, html_report, os.getenv("REPORT_EMAIL", "dmz.oneill@gmail.com")
         )
         print("✅ Done. Email sent.")
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    except (
+        OSError,
+        subprocess.SubprocessError,
+        smtplib.SMTPException,
+        OpenAIError,
+        ValueError,
+        KeyError,
+        IndexError,
+        TypeError,
+        AttributeError,
+    ) as exc:
         print(f"❌ Failed: {exc}")
 
 

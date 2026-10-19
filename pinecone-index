@@ -4,11 +4,14 @@
 import os
 
 import openai
+import pinecone
 from pinecone import Pinecone, ServerlessSpec
 
 from binlib import (
+    exception_types,
     index_changed_python_files,
     load_json_cache,
+    openai_client_errors,
     require_nonempty_text,
     save_json_cache,
 )
@@ -45,13 +48,18 @@ def main() -> None:
     codebase_dir = os.getcwd()
     print(f"Using codebase from: {codebase_dir}")
     index = pc_client.Index(index_name)
+    pinecone_errors = getattr(pinecone, "exceptions", None)
+    upload_errors = exception_types(
+        *openai_client_errors(openai),
+        getattr(pinecone_errors, "PineconeException", None),
+    )
 
     def upload(file_path: str, code: str) -> None:
         embedding = get_embeddings(code)
         metadata = {"file": file_path, "text": code}
         index.upsert([(file_path, embedding, metadata)])
 
-    index_changed_python_files(codebase_dir, cache, upload)
+    index_changed_python_files(codebase_dir, cache, upload, upload_errors)
     save_json_cache(cache_file, cache)
     query_embedding = get_embeddings("list issues")
     result = index.query(vector=query_embedding, top_k=5, include_metadata=True)

@@ -7,6 +7,8 @@ import re
 from pinecone import Pinecone
 
 from binlib import (
+    RESPONSE_PARSE_ERRORS,
+    OpenAIError,
     format_pinecone_matches,
     pinecone_argument_parser,
     query_pinecone_index,
@@ -69,7 +71,7 @@ def _write_generated_code(provider, matches_with_info: str, args) -> None:
                 print("Writing to file is disabled. Code generation complete.")
         else:
             print("No valid code block found in the response.")
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    except (OSError, OpenAIError) + RESPONSE_PARSE_ERRORS as exc:
         print(f"Error during OpenAI request: {str(exc)}")
 
 

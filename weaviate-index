@@ -4,11 +4,14 @@
 import os
 
 import openai
+import requests
 import weaviate
 
 from binlib import (
+    exception_types,
     index_changed_python_files,
     load_json_cache,
+    openai_client_errors,
     require_nonempty_text,
     save_json_cache,
 )
@@ -41,16 +44,20 @@ def main() -> None:
     cache = load_json_cache(cache_file)
     codebase_dir = os.getcwd()
     print(f"Using codebase from: {codebase_dir}")
+    weaviate_errors = getattr(weaviate, "exceptions", None)
+    upload_errors = exception_types(
+        *openai_client_errors(openai),
+        requests.exceptions.RequestException,
+        getattr(weaviate_errors, "WeaviateBaseError", None),
+        getattr(weaviate_errors, "UnexpectedStatusCodeError", None),
+    )
 
     def upload(_file_path: str, code: str) -> None:
         embedding = get_embeddings(code)
-        data_object = {
-            "code": code,
-            "vector": embedding,
-        }
+        data_object = {"code": code, "vector": embedding}
         client.data_object.create(data_object, "CodeSnippet")
 
-    index_changed_python_files(codebase_dir, cache, upload)
+    index_changed_python_files(codebase_dir, cache, upload, upload_errors)
     save_json_cache(cache_file, cache)
     query_embedding = get_embeddings("list issues")
     result = (

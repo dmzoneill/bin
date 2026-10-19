@@ -37,6 +37,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from binlib import (
+    FILE_READ_ERRORS,
+    RESPONSE_PARSE_ERRORS,
     append_enrichment_to_post,
     search_image_url_unsplash,
     search_youtube_video,
@@ -244,8 +246,8 @@ def generate_description(prompt: str) -> Tuple[Optional[str], Optional[str]]:
         title = clean_html_code_block(response.strip()).strip().splitlines()[0]
         return strip_html_tags(title), response.strip()
 
-    except Exception as e:  # pylint: disable=broad-exception-caught
-        print(f"Error generating description: {e}")
+    except (requests.exceptions.RequestException,) + RESPONSE_PARSE_ERRORS as exc:
+        print(f"Error generating description: {exc}")
         return None, None
 
 
@@ -331,7 +333,7 @@ def _splice_source_files(clean_content: str, files: List[str]) -> str:
                 file_content = handle.read()
             search = f"# File: {os.path.basename(file_path)}"
             clean_content = clean_content.replace(search, "\n" + file_content + "\n")
-        except Exception as exc:  # pylint: disable=broad-exception-caught
+        except FILE_READ_ERRORS as exc:
             print(f"Error reading file {file_path}: {exc}")
     return clean_content
 
@@ -479,7 +481,7 @@ def create_wordpress_post(
             else:
                 detail = f"{media_response.status_code} - {media_response.text}"
                 print(f"Failed to upload featured image: {detail}")
-        except Exception as exc:  # pylint: disable=broad-exception-caught
+        except (requests.exceptions.RequestException,) + RESPONSE_PARSE_ERRORS as exc:
             print(f"Error uploading featured image: {exc}")
 
     try:
@@ -532,8 +534,8 @@ def generate_blog_post_prompt(
             # Add the file name and content to the prompt
             prompt += f"File: {os.path.basename(file_path)}\n"
             prompt += f"Content:\n{content}\n\n"
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"Error reading file {file_path}: {e}")
+        except FILE_READ_ERRORS as exc:
+            print(f"Error reading file {file_path}: {exc}")
             continue
 
     prompt += "The content should be formatted in HTML for WordPress, not markdown.\n"

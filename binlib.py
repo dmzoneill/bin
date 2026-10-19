@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import importlib
 import json
 import os
 import sys
@@ -18,6 +19,12 @@ from typing import Any, NoReturn
 
 class OpenAIError(Exception):
     """Raised when a chat or embedding HTTP call fails."""
+
+
+# Failures from reading a local text file. UnicodeDecodeError is a UnicodeError.
+FILE_READ_ERRORS = (OSError, UnicodeError)
+# Failures from a response body that is not the shape the caller expects.
+RESPONSE_PARSE_ERRORS = (ValueError, KeyError, IndexError, TypeError, AttributeError)
 
 
 class OpenAIProvider:
@@ -197,9 +204,16 @@ def save_json_cache(cache_file: str, cache: Any) -> None:
 
 
 def index_changed_python_files(
-    codebase_dir: str, cache: Any, upload: Callable[[str, str], None]
+    codebase_dir: str,
+    cache: Any,
+    upload: Callable[[str, str], None],
+    upload_errors: tuple[type[BaseException], ...] = (),
 ) -> None:
-    """Upload ``.py`` files whose digest is not already stored in ``cache``."""
+    """Upload ``.py`` files whose digest is not already stored in ``cache``.
+
+    ``ValueError`` is reported as a skip. Classes in ``upload_errors`` are logged
+    and the walk continues, which is how the index scripts treated client failures.
+    """
     for root, _dirs, filenames in os.walk(codebase_dir):
         for filename in filenames:
             if not filename.endswith(".py"):
@@ -216,7 +230,7 @@ def index_changed_python_files(
             except ValueError as exc:
                 print(f"Skipping {file_path}: {exc}")
                 continue
-            except Exception as exc:  # pylint: disable=broad-exception-caught
+            except upload_errors as exc:
                 print(f"Error processing {file_path}: {exc}")
                 continue
             cache[file_path] = file_digest
@@ -288,7 +302,7 @@ def upload_image_to_wordpress(
         if response.status_code == 201:
             return response.json().get("source_url")
         print(f"WordPress upload failed: {response.status_code} - {response.text}")
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    except (requests.exceptions.RequestException,) + RESPONSE_PARSE_ERRORS as exc:
         print(f"Image upload failed: {exc}")
     return None
 
@@ -342,7 +356,7 @@ def _match_text(result: dict[str, Any]) -> tuple[Any, Any]:
             try:
                 with open(file_path, "r", encoding="utf-8") as handle:
                     match_text = handle.read()
-            except Exception as exc:  # pylint: disable=broad-exception-caught
+            except FILE_READ_ERRORS as exc:
                 print(f"Error reading file {file_path}: {exc}")
                 match_text = "No text available in file."
         else:
@@ -350,15 +364,45 @@ def _match_text(result: dict[str, Any]) -> tuple[Any, Any]:
     return file_info, match_text
 
 
-def _requests() -> Any:
-    """Import requests only when a helper actually performs HTTP."""
-    import requests  # pylint: disable=import-outside-toplevel
+def openai_client_errors(openai_module: Any) -> tuple[type[BaseException], ...]:
+    """OS and OpenAI failures raised while embedding one source file."""
+    legacy = getattr(openai_module, "error", None)
+    return exception_types(
+        OSError,
+        KeyError,
+        IndexError,
+        TypeError,
+        RuntimeError,
+        getattr(openai_module, "OpenAIError", None),
+        getattr(openai_module, "APIError", None),
+        getattr(legacy, "OpenAIError", None),
+        getattr(legacy, "APIError", None),
+    )
 
-    return requests
+
+def exception_types(*candidates: Any) -> tuple[type[BaseException], ...]:
+    """Return the exception classes in ``candidates``.
+
+    ``Exception`` and ``BaseException`` are dropped so callers stay specific.
+    """
+    found: list[type[BaseException]] = []
+    for item in candidates:
+        if item in (Exception, BaseException):
+            continue
+        if (
+            isinstance(item, type)
+            and issubclass(item, BaseException)
+            and item not in found
+        ):
+            found.append(item)
+    return tuple(found)
+
+
+def _requests() -> Any:
+    """Load requests the first time an HTTP helper runs."""
+    return importlib.import_module("requests")
 
 
 def _pinecone() -> Any:
-    """Import pinecone only for the query scripts."""
-    import pinecone  # pylint: disable=import-outside-toplevel
-
-    return pinecone
+    """Load pinecone the first time a query script builds a client."""
+    return importlib.import_module("pinecone")
