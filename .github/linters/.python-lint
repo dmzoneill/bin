@@ -1,0 +1,16 @@
+[MASTER]
+
+# Use multiple processes to speed up Pylint.
+jobs=0
+
+[MESSAGES CONTROL]
+
+# Ignoring Import Errors is desired as super-linter
+# does not support installing dependencies as it runs
+disable=import-error
+
+[BASIC]
+
+# These executables keep hyphenated filenames (aa-release.py, pinecone-query, ...).
+# Renaming them would break the commands already on PATH.
+module-rgx=(([a-z_][a-z0-9_]*)|([A-Z][a-zA-Z0-9]+)|([a-z0-9]+(?:-[a-z0-9]+)*))$

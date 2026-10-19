@@ -1,0 +1,10 @@
+# Store the cache in a temporary location
+cache-dir = "/tmp/.ruff_cache"
+
+# Match black's default line length so ruff format and black agree.
+# The super-linter template uses 120, which makes ruff format unwrap
+# lines that black wraps at 88.
+line-length = 88
+
+[lint]
+ignore = ["E203"]
