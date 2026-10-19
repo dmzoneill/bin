@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 """
-This script automates the generation and publication of blog posts on a WordPress site from source code files.
-It leverages the OpenAI API to enhance the text and generate descriptions while identifying programming languages based
+This script automates the generation and publication of blog posts on a WordPress site from source
+code files.
+It leverages the OpenAI API to enhance the text and generate descriptions while identifying
+programming languages based
 on file extensions.
 
 Key features include:
@@ -19,23 +21,33 @@ Environment variables required for operation:
 - AI_API_KEY: API key for OpenAI.
 - AI_MODEL: Model name for OpenAI API.
 
-The script can be executed from the command line, specifying a path to a file or directory containing source code, with
+The script can be executed from the command line, specifying a path to a file or directory
+containing source code, with
 an optional input string for customizing the blog post content.
 """
+
 import argparse
 import base64
 import datetime
 import os
 import re
 import sys
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-WORDPRESS_URL: str = os.getenv("WORDPRESS_URL")
-WORDPRESS_USERNAME: str = os.getenv("WORDPRESS_USERNAME")
-WORDPRESS_PASSWORD: str = os.getenv("WORDPRESS_PASSWORD")
-WORDPRESS_APPLICATION: str = os.getenv("WORDPRESS_APPLICATION")
+from binlib import (
+    append_enrichment_to_post,
+    search_image_url_unsplash,
+    search_youtube_video,
+    upload_image_to_wordpress,
+    wordpress_openai,
+)
+
+WORDPRESS_URL: str | None = os.getenv("WORDPRESS_URL")
+WORDPRESS_USERNAME: str | None = os.getenv("WORDPRESS_USERNAME")
+WORDPRESS_PASSWORD: str | None = os.getenv("WORDPRESS_PASSWORD")
+WORDPRESS_APPLICATION: str | None = os.getenv("WORDPRESS_APPLICATION")
 
 # Map file extensions to programming languages
 EXTENSION_LANGUAGE_MAP: Dict[str, str] = {
@@ -66,140 +78,87 @@ EXTENSION_LANGUAGE_MAP: Dict[str, str] = {
 }
 
 
-system_prompt: str = """
-Please generate a blog post based on the provided source code.
-The content should be formatted in **HTML for WordPress**, not markdown.
-
-Make sure the **Title** is always placed at the top and follows this format:
-<h1>Title: some title</h1>. This should be the very first line of the blog post.
-
-Then, proceed to generate the rest of the content in a personal and relatable style,
-using **HTML tags** for formatting (like <p>, <ul>, <li>, etc.) and avoiding markdown
-formatting (like **bold**, *italic*, etc.). Keep the tone friendly,
-simple, and easy to read, with clear structure. Do not use markdown syntax.
-
-1. **Summarize the code**
-    Start with a simple summary of the solution, its function and how it works.
-
-2. **Post the code in a code block**
-    Make sure the code block is compatible with WordPress.
-    Use the <pre> and <code> tags to format the code. e.g:
-    <pre><code class="language-css">p { color: red }</code></pre>
-    Make sure the class is compatible with prism js highlighter
-
-3. **Explain the code**
-    Provide a detailed explanation of the code, including its purpose,
-    how it works, and any important details or considerations.
-
-4. ** instead of sending all the code back, just send
-    <pre><code class="language-css"># File: the filename you were given #</code></pre>
-    if there is more than 1 file in the input, then just put another code block at
-    the apprpriate place in the post.
-    <pre><code class="language-css"># File: the filename you were given #</code></pre>
-
-**Post Format:**
-
-- **Start with a Title**
-    Ensure the **Title** is the first line and follows the format Title: some title.
-
-- **HTML Format for WordPress**
-    Make sure the content is ready to go for WordPress. Skip any HTML comments (no <!-- comment -->),
-    and make sure the links are valid, including for images or GitHub references.
-    If there’s an image in the README, include that in the post if it fits!
-
-- **Keep It Real**
-    The tone should feel like you’re sharing the update with a friend—nothing too formal or
-    too grandiose. If the changes are small (like updating a TODO file), let people know that
-    the update is more about cleaning things up than adding huge new features.
-
-- **Media*
-    At the end of the post it's important to include the following 2 items.
-    Below is an example of the 2 items, "image_idea" and "youtube_topics".
-    Replace the values as necessary with the instructions provided. 
-    Dont add any html formatting to these items.
-    Example:
-        image_idea: A clear idea of a visual related to the topic
-        youtube_topics: topic for first video, topic for second video
-
-The key is to make the post feel like a casual, friendly update, rather than a corporate announcement.
-Let people know what changed, why it matters, and how it will affect them—but keep it laid-back and easy to read.
-"""
-
-
-class OpenAIProvider:  # pylint: disable=too-few-public-methods
-    """
-    This class provides a way to interact with the OpenAI API for text completion tasks.
-
-    Attributes:
-    - api_key (str): The API key used for authentication with the OpenAI API.
-    - endpoint (str): The URL endpoint for making requests to the OpenAI API.
-    - model (str): The model identifier used for text completion tasks.
-
-    Methods:
-    - improve_text(prompt: str, text: str) -> str: Sends a text completion request to the OpenAI API using the provided
-    prompt and text, and returns the improved text response.
-    """
-
-    def __init__(self) -> None:
-        """
-        Initialize the API key, endpoint, and model for OpenAI chat completions.
-
-        Arguments:
-        - self: The object instance.
-        """
-        self.api_key: str = os.getenv("AI_API_KEY")
-        self.endpoint: str = "https://api.openai.com/v1/chat/completions"
-        self.model: str = os.getenv("AI_MODEL")
-
-    def improve_text(self, prompt: str, text: str) -> str:
-        """
-        Improve the given text by providing a more coherent response using the OpenAI API.
-
-        Arguments:
-        - prompt (str): The prompt to be used for generating a response.
-        - text (str): The original text that needs improvement.
-
-        Return:
-        - str: The improved text generated by the OpenAI API.
-
-        Exceptions:
-        - requests.exceptions.RequestException: Raised for any request-related exceptions like network issues or
-        timeouts.
-        """
-        headers: Dict[str, str] = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-        body: Dict = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": text},
-            ],
-            "temperature": 0.4,
-        }
-
-        try:
-            # Make the API request
-            response: requests.Response = requests.post(
-                self.endpoint, json=body, headers=headers, timeout=120
-            )
-
-            # Check for successful response
-            if response.status_code == 200:
-                return response.json()[
-                    "choices"][0]["message"]["content"].strip()
-
-            # If the request fails, raise an error with the response details
-            print(
-                f"OpenAI API call failed: {response.status_code} - {response.text}")
-            sys.exit(1)
-        except requests.exceptions.RequestException as e:
-            # Catch any request-related exceptions (e.g., network issues,
-            # timeouts)
-            print(f"Request failed: {str(e)}")
-            sys.exit(1)
+SYSTEM_PROMPT: str = (
+    "\n"
+    "Please generate a blog post based on the provided source code.\n"
+    "The content should be formatted in **HTML for WordPress**, not markdow"
+    "n.\n"
+    "\n"
+    "Make sure the **Title** is always placed at the top and follows this f"
+    "ormat:\n"
+    "<h1>Title: some title</h1>. This should be the very first line of the "
+    "blog post.\n"
+    "\n"
+    "Then, proceed to generate the rest of the content in a personal and re"
+    "latable style,\n"
+    "using **HTML tags** for formatting (like <p>, <ul>, <li>, etc.) and av"
+    "oiding markdown\n"
+    "formatting (like **bold**, *italic*, etc.). Keep the tone friendly,\n"
+    "simple, and easy to read, with clear structure. Do not use markdown sy"
+    "ntax.\n"
+    "\n"
+    "1. **Summarize the code**\n"
+    "    Start with a simple summary of the solution, its function and how "
+    "it works.\n"
+    "\n"
+    "2. **Post the code in a code block**\n"
+    "    Make sure the code block is compatible with WordPress.\n"
+    "    Use the <pre> and <code> tags to format the code. e.g:\n"
+    '    <pre><code class="language-css">p { color: red }</code></pre>\n'
+    "    Make sure the class is compatible with prism js highlighter\n"
+    "\n"
+    "3. **Explain the code**\n"
+    "    Provide a detailed explanation of the code, including its purpose,"
+    "\n"
+    "    how it works, and any important details or considerations.\n"
+    "\n"
+    "4. ** instead of sending all the code back, just send\n"
+    '    <pre><code class="language-css"># File: the filename you were give'
+    "n #</code></pre>\n"
+    "    if there is more than 1 file in the input, then just put another c"
+    "ode block at\n"
+    "    the apprpriate place in the post.\n"  # codespell:ignore
+    '    <pre><code class="language-css"># File: the filename you were give'
+    "n #</code></pre>\n"
+    "\n"
+    "**Post Format:**\n"
+    "\n"
+    "- **Start with a Title**\n"
+    "    Ensure the **Title** is the first line and follows the format Titl"
+    "e: some title.\n"
+    "\n"
+    "- **HTML Format for WordPress**\n"
+    "    Make sure the content is ready to go for WordPress. Skip any HTML "
+    "comments (no <!-- comment -->),\n"
+    "    and make sure the links are valid, including for images or GitHub "
+    "references.\n"
+    "    If there’s an image in the README, include that in the post if it "
+    "fits!\n"
+    "\n"
+    "- **Keep It Real**\n"
+    "    The tone should feel like you’re sharing the update with a friend—"
+    "nothing too formal or\n"
+    "    too grandiose. If the changes are small (like updating a TODO file"
+    "), let people know that\n"
+    "    the update is more about cleaning things up than adding huge new f"
+    "eatures.\n"
+    "\n"
+    "- **Media*\n"
+    "    At the end of the post it's important to include the following 2 i"
+    "tems.\n"
+    '    Below is an example of the 2 items, "image_idea" and "youtube_topi'
+    'cs".\n'
+    "    Replace the values as necessary with the instructions provided. \n"
+    "    Dont add any html formatting to these items.\n"
+    "    Example:\n"
+    "        image_idea: A clear idea of a visual related to the topic\n"
+    "        youtube_topics: topic for first video, topic for second video\n"
+    "\n"
+    "The key is to make the post feel like a casual, friendly update, rathe"
+    "r than a corporate announcement.\n"
+    "Let people know what changed, why it matters, and how it will affect t"
+    "hem—but keep it laid-back and easy to read.\n"
+)
 
 
 def determine_languages_from_files(files: List[str]) -> List[str]:
@@ -267,13 +226,12 @@ def generate_description(prompt: str) -> Tuple[Optional[str], Optional[str]]:
     Returns (None, None) if an error occurs during the generation process.
     """
     user_prompt: str = prompt
-    ai_provider: OpenAIProvider = OpenAIProvider()
-
+    ai_provider = wordpress_openai()
 
     try:
-        response: str = ai_provider.improve_text(system_prompt, user_prompt)
+        response: str = ai_provider.improve_text(SYSTEM_PROMPT, user_prompt)
 
-        print(system_prompt)
+        print(SYSTEM_PROMPT)
         print(response)
 
         title_match: Optional[re.Match] = re.search(
@@ -283,8 +241,7 @@ def generate_description(prompt: str) -> Tuple[Optional[str], Optional[str]]:
             title: str = title_match.group(1).strip()
             description: str = re.sub(r"Title:\s*.*\n", "", response).strip()
             return title, description
-        title: str = clean_html_code_block(
-            response.strip()).strip().splitlines()[0]
+        title = clean_html_code_block(response.strip()).strip().splitlines()[0]
         return strip_html_tags(title), response.strip()
 
     except Exception as e:  # pylint: disable=broad-exception-caught
@@ -306,14 +263,17 @@ def get_or_create_tags(tags: List[str]) -> List[int]:
     tags_url: str = f"{WORDPRESS_URL}tags"
     headers: Dict[str, str] = {
         "Content-Type": "application/json",
-        "Authorization": f'Basic {base64.b64encode(f"{WORDPRESS_USERNAME}:{WORDPRESS_APPLICATION}".encode()).decode()}',
+        "Authorization": "Basic "
+        + base64.b64encode(
+            f"{WORDPRESS_USERNAME}:{WORDPRESS_APPLICATION}".encode()
+        ).decode(),
     }
 
     response: requests.Response = requests.get(
         tags_url, headers=headers, params={"page": 1, "per_page": 100}, timeout=30
     )
     if response.status_code == 200:
-        existing_tags: List[Dict[str, str]] = response.json()
+        existing_tags: List[Dict[str, Any]] = response.json()
         existing_tag_names: Dict[str, int] = {
             tag["name"].lower(): tag["id"] for tag in existing_tags
         }
@@ -339,8 +299,7 @@ def get_or_create_tags(tags: List[str]) -> List[int]:
     return tag_ids
 
 
-def get_category_id(languages: List[str],
-                    categories: List[Dict[str, str]]) -> int:
+def get_category_id(languages: List[str], categories: List[Dict[str, Any]]) -> int:
     """
     Get the category ID based on the provided programming languages and categories.
 
@@ -364,54 +323,32 @@ def get_category_id(languages: List[str],
     return category_id
 
 
-def search_image_url_unsplash(query: str, api_key: str) -> Optional[str]:
-    url = "https://api.unsplash.com/search/photos"
-    headers = {
-        "Accept-Version": "v1",
-        "Authorization": f"Client-ID {api_key}"
-    }
-    params = {
-        "query": query,
-        "orientation": "landscape",
-        "per_page": 1
-    }
-    response = requests.get(url, headers=headers, params=params)
-    if response.status_code == 200:
-        data = response.json()
-        if data["results"]:
-            return data["results"][0]["urls"]["regular"]
-    else:
-        print(f"Unsplash API error: {response.status_code} - {response.text}")
-    return None
+def _splice_source_files(clean_content: str, files: List[str]) -> str:
+    """Replace ``# File:`` placeholders with the text of each source file."""
+    for file_path in files:
+        try:
+            with open(file_path, "r", encoding="utf-8") as handle:
+                file_content = handle.read()
+            search = f"# File: {os.path.basename(file_path)}"
+            clean_content = clean_content.replace(search, "\n" + file_content + "\n")
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            print(f"Error reading file {file_path}: {exc}")
+    return clean_content
 
 
-def upload_image_to_wordpress(image_url: str, image_name: str) -> Optional[str]:
-    try:
-        img_data = requests.get(image_url).content
-        media_url = f"{WORDPRESS_URL}media"
-        headers = {
-            "Content-Disposition": f"attachment; filename={image_name}",
-            "Content-Type": "image/jpeg",
-            "Authorization": f'Basic {base64.b64encode(f"{WORDPRESS_USERNAME}:{WORDPRESS_APPLICATION}".encode()).decode()}',
-        }
-        response = requests.post(media_url, headers=headers, data=img_data)
-        if response.status_code == 201:
-            return response.json().get("source_url")
-        else:
-            print(f"WordPress upload failed: {response.status_code} - {response.text}")
-    except Exception as e:
-        print(f"Image upload failed: {e}")
-    return None
+def generate_description_with_media(
+    prompt: str,
+) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[List[str]]]:
+    """Return a title, HTML body, image idea, and YouTube topics."""
+    ai_provider = wordpress_openai()
 
-
-def generate_description_with_media(prompt: str) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[List[str]]]:
-    ai_provider = OpenAIProvider()
-
-    response = ai_provider.improve_text(system_prompt, prompt)
+    response = ai_provider.improve_text(SYSTEM_PROMPT, prompt)
 
     # Use regex to extract image_idea and youtube_topics
     image_match = re.search(r"<p>image_idea:\s*(.*?)</p>$", response, re.MULTILINE)
-    youtube_match = re.search(r"<p>youtube_topics:\s*(.*?)</p>$", response, re.MULTILINE)
+    youtube_match = re.search(
+        r"<p>youtube_topics:\s*(.*?)</p>$", response, re.MULTILINE
+    )
 
     image_idea = None
     youtube_topics = []
@@ -434,7 +371,7 @@ def generate_description_with_media(prompt: str) -> Tuple[Optional[str], Optiona
 
     # Remove the media-related lines from the response to get the content
     if image_match:
-        response = response[:image_match.start()].strip()
+        response = response[: image_match.start()].strip()
 
     # Extract the title from the response
     title_match = re.search(r"Title:\s*(.*)", response)
@@ -445,46 +382,13 @@ def generate_description_with_media(prompt: str) -> Tuple[Optional[str], Optiona
 
     return None, response, image_idea, youtube_topics
 
-def search_youtube_video(topic: str, api_key: str) -> Optional[str]:
-    url = "https://www.googleapis.com/youtube/v3/search"
-    params = {
-        "part": "snippet",
-        "q": topic,
-        "type": "video",
-        "maxResults": 1,
-        "videoEmbeddable": "true",
-        "key": api_key
-    }
-    response = requests.get(url, params=params)
-    if response.status_code == 200:
-        data = response.json()
-        if data["items"]:
-            return f"https://www.youtube.com/embed/{data['items'][0]['id']['videoId']}"
-    return None
-
-
-def append_enrichment_to_post(content: str, video_url: Optional[str]) -> str:
-    enrichment = ""
-    if video_url:
-        enrichment = "\n\n<hr><h2>📚 Further Learning</h2>\n"
-        enrichment += f'<p>🎥 Watch this video for more:</p>\n<iframe width="710" height="415" src="{video_url}" frameborder="0" allowfullscreen></iframe>\n'
-    return content + enrichment
-
-
-def search_image_url_unsplash(query: str, api_key: str) -> Optional[str]:
-    url = "https://api.unsplash.com/search/photos"
-    headers = {"Authorization": f"Client-ID {api_key}"}
-    params = {"query": query, "per_page": 1, "orientation": "landscape"}
-    response = requests.get(url, headers=headers, params=params)
-    if response.status_code == 200:
-        data = response.json()
-        if data["results"]:
-            return data["results"][0]["urls"]["regular"]
-    return None
-
 
 def create_wordpress_post(
-    title: str, content: str, excerpt: str, files: List[str], featured_image_url: Optional[str] = None
+    title: str,
+    content: str,
+    excerpt: str,
+    files: List[str],
+    featured_image_url: Optional[str] = None,
 ) -> Optional[Dict]:
     """
     Creates a WordPress post with the provided title, content, excerpt, and files.
@@ -496,15 +400,16 @@ def create_wordpress_post(
     - files (list): List of files to determine programming languages.
 
     Return:
-    - dict or None: A dictionary containing the response data if the post is successfully created, otherwise None.
+    - dict or None: A dictionary containing the response data if the post is successfully created,
+    otherwise None.
 
     Exceptions:
     - requests.exceptions.RequestException: If an error occurs during the HTTP request.
     """
     # pylint: disable=too-many-locals
     url: str = f"{WORDPRESS_URL}posts"
-    creds: str = f"{WORDPRESS_USERNAME}:{WORDPRESS_APPLICATION}".encode()
-    creds: str = base64.b64encode(creds).decode("utf-8")
+    raw_creds = f"{WORDPRESS_USERNAME}:{WORDPRESS_APPLICATION}".encode()
+    creds = base64.b64encode(raw_creds).decode("utf-8")
     headers: Dict[str, str] = {
         "Content-Type": "application/json",
         "Authorization": f"Basic {creds}",
@@ -524,35 +429,22 @@ def create_wordpress_post(
     )
     category_id: int = 0
     if response.status_code == 200:
-        categories: List[Dict[str, str]] = response.json()
+        categories: List[Dict[str, Any]] = response.json()
         category_id = get_category_id(languages, categories)
 
         if not category_id:
             print("No matching categories found. Using default category.")
 
     # Clean and prepare content
-    clean_content: str = clean_html_code_block(content)
+    clean_content = _splice_source_files(clean_html_code_block(content), files)
 
-    for file_path in files:
-        try:
-            # Read the content of the file
-            with open(file_path, "r", encoding="utf-8") as file:
-                content: str = file.read()
-
-            # Add the file name and content to the prompt
-            search = f"# File: {os.path.basename(file_path)}"
-            clean_content = clean_content.replace(search, "\n" + content + "\n")
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            print(f"Error reading file {file_path}: {e}")
-            continue
-
-    title: str = strip_html_tags(clean_html_code_block(title))
-    excerpt: str = strip_html_tags(clean_html_code_block(excerpt))
+    title = strip_html_tags(clean_html_code_block(title))
+    excerpt = strip_html_tags(clean_html_code_block(excerpt))
 
     # Get the current publish date
     publish_date: str = get_publish_date()
 
-    post_data: Dict[str, str] = {
+    post_data: Dict[str, Any] = {
         "title": title,
         "content": clean_content,
         "status": "publish",
@@ -573,27 +465,31 @@ def create_wordpress_post(
                 "Content-Type": "image/jpeg",
                 "Authorization": f"Basic {creds}",
             }
-            media_response = requests.post(media_url, headers=media_headers, data=img_data)
+            media_response = requests.post(
+                media_url, headers=media_headers, data=img_data
+            )
             if media_response.status_code == 201:
                 media_id = media_response.json().get("id")
                 if media_id:
                     post_data["featured_media"] = media_id
                     post_data["content"] = post_data["content"].replace(
-                        "FEATURED_IMAGE_PLACEHOLDER", media_response.json().get("source_url")
+                        "FEATURED_IMAGE_PLACEHOLDER",
+                        media_response.json().get("source_url"),
                     )
             else:
-                print(f"Failed to upload featured image: {media_response.status_code} - {media_response.text}")
-        except Exception as e:
-            print(f"Error uploading featured image: {e}")
+                detail = f"{media_response.status_code} - {media_response.text}"
+                print(f"Failed to upload featured image: {detail}")
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            print(f"Error uploading featured image: {exc}")
 
     try:
-        response: requests.Response = requests.post(
+        created: requests.Response = requests.post(
             url, json=post_data, headers=headers, timeout=30
         )
-        if response.status_code == 201:
-            print(f"Post created successfully! URL: {response.json()['link']}")
-            return response.json()
-        print(f"Failed to create post. Status Code: {response.status_code}")
+        if created.status_code == 201:
+            print(f"Post created successfully! URL: {created.json()['link']}")
+            return created.json()
+        print(f"Failed to create post. Status Code: {created.status_code}")
         return None
 
     except requests.exceptions.RequestException as e:
@@ -609,13 +505,17 @@ def generate_blog_post_prompt(
 
     Arguments:
     - files (list): A list of file paths containing the source code for the blog post.
-    - optional_input (str, optional): Additional input to be included in the prompt. Defaults to None.
+    - optional_input (str, optional): Additional input to be included in the prompt. Defaults to
+    None.
 
     Return:
-    - str: A formatted prompt for generating a blog post, including the content of the files and optional input.
+    - str: A formatted prompt for generating a blog post, including the content of the files and
+    optional input.
 
-    The function reads the content of each file in the provided list of file paths, adds the file name and content to
-    the prompt, and formats the prompt for generating a blog post. If an optional input is provided, it is included in
+    The function reads the content of each file in the provided list of file paths, adds the file
+    name and content to
+    the prompt, and formats the prompt for generating a blog post. If an optional input is
+    provided, it is included in
     the prompt as well. The function also handles exceptions that may occur while reading files.
 
     Side Effects:
@@ -667,8 +567,7 @@ def get_files_from_path(file_or_folder_path: str) -> List[str]:
                 file_paths.append(os.path.join(root, file))
         return file_paths
 
-    print(
-        f"The path '{file_or_folder_path}' is neither a file nor a directory.")
+    print(f"The path '{file_or_folder_path}' is neither a file nor a directory.")
     sys.exit(1)
 
 
@@ -692,16 +591,44 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _enrich_with_media(title, description, image_idea, youtube_topics):
+    """Attach an Unsplash image URL and a YouTube embed to the post body."""
+    unsplash_key = os.getenv("UNSPLASH_ACCESS_KEY")
+    youtube_key = os.getenv("YOUTUBE_API")
+    image_url = None
+    if image_idea and unsplash_key:
+        raw_img_url = search_image_url_unsplash(image_idea, unsplash_key)
+        if raw_img_url:
+            image_url = upload_image_to_wordpress(
+                raw_img_url,
+                title + ".jpg",
+                f"{WORDPRESS_URL}media",
+                WORDPRESS_USERNAME,
+                WORDPRESS_APPLICATION,
+            )
+    video_url = None
+    if youtube_topics and youtube_key:
+        for topic in youtube_topics:
+            video_url = search_youtube_video(topic, youtube_key)
+            if video_url:
+                break
+    return append_enrichment_to_post(description, video_url), image_url
+
+
 def main() -> None:
     """
-    This function serves as the main entry point for processing a file or directory path, generating a blog post
-    prompt, utilizing OpenAI to generate a title and description, preparing an SEO excerpt, and creating a WordPress
+    This function serves as the main entry point for processing a file or directory path,
+    generating a blog post
+    prompt, utilizing OpenAI to generate a title and description, preparing an SEO excerpt, and
+    creating a WordPress
     post based on the processed data.
 
     Arguments:
-    - No arguments are passed directly to the function. However, the function relies on the following components:
+    - No arguments are passed directly to the function. However, the function relies on the
+    following components:
     - Command-line arguments obtained by parsing arguments using 'parse_arguments()'.
-    - 'file_or_dir_path': Represents the path (file or directory) obtained from the parsed arguments.
+    - 'file_or_dir_path': Represents the path (file or directory) obtained from the parsed
+    arguments.
     - 'optional_input': Represents an optional input string obtained from the parsed arguments.
     - 'files': A list of files obtained from the path using 'get_files_from_path()'.
     - 'prompt': A blog post prompt generated based on the files and optional input.
@@ -714,15 +641,14 @@ def main() -> None:
     - No explicit return value. The function prints out various processing steps and outcomes.
 
     Exceptions:
-    - Any exceptions raised during the main processing are caught and printed with a generic error message.
+    - Any exceptions raised during the main processing are caught and printed with a generic error
+    message.
 
     Side Effects:
-    - The function interacts with external services for generating blog content and creating a WordPress post.
+    - The function interacts with external services for generating blog content and creating a
+    WordPress post.
     - It prints out information related to the processing steps and outcomes.
     """
-    unsplash_key = os.getenv("UNSPLASH_ACCESS_KEY")
-    youtube_key = os.getenv("YOUTUBE_API")
-
     # Parse command-line arguments
     args: argparse.Namespace = parse_arguments()
     file_or_dir_path: str = args.path
@@ -740,16 +666,18 @@ def main() -> None:
     title: Optional[str]
     description: Optional[str]
     image_idea: Optional[str]
-    youtube_topics: Optional[str]
+    youtube_topics: Optional[List[str]]
 
     # Generate content with media
-    title, description, image_idea, youtube_topics = generate_description_with_media(prompt)
+    title, description, image_idea, youtube_topics = generate_description_with_media(
+        prompt
+    )
 
     print(title)
     print(image_idea)
     print(youtube_topics)
 
-    if(not title or not description):
+    if not title or not description:
         print("Error generating title/description.")
         sys.exit(1)
 
@@ -757,22 +685,9 @@ def main() -> None:
     excerpt: str = strip_html_tags(clean_html_code_block(description)).strip()
     # Use the first 150 characters as an SEO excerpt
     excerpt = excerpt[:150].strip()
-    # Search image
-    image_url = None
-    if image_idea and unsplash_key:
-        raw_img_url = search_image_url_unsplash(image_idea, unsplash_key)
-        if raw_img_url:
-            image_url = upload_image_to_wordpress(raw_img_url, title + ".jpg")
-
-    # Search YouTube
-    video_url = None
-    if youtube_topics and youtube_key:
-        for topic in youtube_topics:
-            video_url = search_youtube_video(topic, youtube_key)
-            if video_url:
-                break
-    # Append enrichment
-    description = append_enrichment_to_post(description, video_url)
+    description, image_url = _enrich_with_media(
+        title, description, image_idea, youtube_topics
+    )
 
     # Create WordPress post
     post_response: Optional[Dict] = create_wordpress_post(
