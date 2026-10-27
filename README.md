@@ -1,5 +1,9 @@
 # bin
 
+<p align="center">
+  <img src=".github/logo.png" alt="bin logo" width="128" />
+</p>
+
 My personal scripts and command-line tools, kept in `~/bin`.
 
 ## Contents
