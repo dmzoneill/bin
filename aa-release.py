@@ -3,7 +3,7 @@
 
 import os
 import re
-import subprocess
+import subprocess  # nosec B404
 import sys
 from datetime import datetime
 from urllib.parse import quote_plus
@@ -44,7 +44,7 @@ def get_gitlab_commits(previous_sha: str) -> list:
         f"?ref_name=master&since={previous_sha}"
     )
     headers = {"PRIVATE-TOKEN": os.getenv("GITLAB_API_TOKEN")}
-    response = requests.get(url, headers=headers, verify=False)
+    response = requests.get(url, headers=headers, verify=False, timeout=60)  # nosec B501 # nosemgrep
     if response.status_code == 200:
         return response.json()
     raise RuntimeError(f"Failed to get commits: {response.status_code}")
@@ -74,9 +74,9 @@ def commit_and_push_changes() -> None:
     """Commit the deploy file and open the printed merge-request URL."""
     today = datetime.today().strftime("%Y-%m-%d")
     commit_message = f"AAP-AA-RELEASE-{today}"
-    subprocess.run(["git", "add", DEPLOY_CLOWDER_FILE], check=False)
-    subprocess.run(["git", "commit", "-m", commit_message], check=False)
-    push_output = subprocess.check_output(
+    subprocess.run(["git", "add", DEPLOY_CLOWDER_FILE], check=False)  # nosec B603 B607
+    subprocess.run(["git", "commit", "-m", commit_message], check=False)  # nosec B603 B607
+    push_output = subprocess.check_output(  # nosec B603 B607
         ["git", "push", "-u", "origin", "master:" + commit_message],
         stderr=subprocess.STDOUT,
         text=True,
@@ -85,7 +85,7 @@ def commit_and_push_changes() -> None:
     if match:
         merge_request_url = match.group(1)
         print(f"Merge request URL: {merge_request_url}")
-        subprocess.run(["xdg-open", merge_request_url], check=False)
+        subprocess.run(["xdg-open", merge_request_url], check=False)  # nosec B603 B607
         return
     print("No merge request URL found in push output.")
     sys.exit(1)

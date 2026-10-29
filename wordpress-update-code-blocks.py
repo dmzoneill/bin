@@ -102,7 +102,7 @@ def _set_featured_media(post: dict, featured_image_url: str | None, title: str) 
     """Upload the featured image again and store its media id on ``post``."""
     if not featured_image_url:
         return
-    img_data = requests.get(featured_image_url).content
+    img_data = requests.get(featured_image_url, timeout=60).content
     headers = get_auth_header()
     headers.update(
         {
@@ -110,7 +110,7 @@ def _set_featured_media(post: dict, featured_image_url: str | None, title: str) 
             "Content-Type": "image/jpeg",
         }
     )
-    media_response = requests.post(f"{WP_SITE}media", headers=headers, data=img_data)
+    media_response = requests.post(f"{WP_SITE}media", headers=headers, data=img_data, timeout=60)
     if media_response.status_code == 201:
         media_id = media_response.json().get("id")
         post["featured_media"] = media_id
@@ -157,7 +157,7 @@ def update_posts(items, ai_provider, post_type: str) -> None:
         if "featured_media" in enriched_post:
             payload["featured_media"] = enriched_post["featured_media"]
         update_url = f"{WP_SITE}{post_type}/{post['id']}"
-        result = requests.put(update_url, json=payload, headers=get_auth_header())
+        result = requests.put(update_url, json=payload, headers=get_auth_header(), timeout=60)
         title = post["title"]["rendered"]
         if result.status_code == 200:
             print(f"✅ Successfully updated {post_type} ID {post['id']}: {title}")
@@ -171,7 +171,7 @@ def update_content(post_type: str) -> None:
     page = 1
     while True:
         url = f"{WP_SITE}{post_type}?per_page=100&page={page}"
-        response = requests.get(url, headers=get_auth_header())
+        response = requests.get(url, headers=get_auth_header(), timeout=60)
         if response.status_code != 200:
             print(
                 f"⚠️ Failed to fetch {post_type} (page {page}): {response.status_code}"
