@@ -2,7 +2,7 @@
 
 import os
 import smtplib
-import subprocess
+import subprocess  # nosec B404
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -12,7 +12,7 @@ from binlib import OpenAIError, journal_openai
 
 def get_journal_logs() -> str:
     """Return today's journalctl output."""
-    result = subprocess.run(
+    result = subprocess.run(  # nosec B603 B607
         ["journalctl", "--since", "today", "--output", "short-iso"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

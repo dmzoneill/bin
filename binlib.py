@@ -253,7 +253,7 @@ def search_image_url_unsplash(query: str, api_key: str | None) -> str | None:
     url = "https://api.unsplash.com/search/photos"
     headers = {"Authorization": f"Client-ID {api_key}"}
     params = {"query": query, "per_page": 1, "orientation": "landscape"}
-    response = requests.get(url, headers=headers, params=params)
+    response = requests.get(url, headers=headers, params=params, timeout=60)
     if response.status_code == 200:
         data = response.json()
         if data["results"]:
@@ -273,7 +273,7 @@ def search_youtube_video(topic: str, api_key: str | None) -> str | None:
         "videoEmbeddable": "true",
         "key": api_key,
     }
-    response = requests.get(url, params=params)
+    response = requests.get(url, params=params, timeout=60)
     if response.status_code == 200:
         data = response.json()
         if data["items"]:
@@ -291,14 +291,14 @@ def upload_image_to_wordpress(
     """Download ``image_url`` and upload it to a WordPress media endpoint."""
     requests = _requests()
     try:
-        img_data = requests.get(image_url).content
+        img_data = requests.get(image_url, timeout=60).content
         token = base64.b64encode(f"{username}:{application}".encode()).decode()
         headers = {
             "Content-Disposition": f"attachment; filename={image_name}",
             "Content-Type": "image/jpeg",
             "Authorization": f"Basic {token}",
         }
-        response = requests.post(media_url, headers=headers, data=img_data)
+        response = requests.post(media_url, headers=headers, data=img_data, timeout=60)
         if response.status_code == 201:
             return response.json().get("source_url")
         print(f"WordPress upload failed: {response.status_code} - {response.text}")
