@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Email an HTML summary of today's systemd journal."""
 
 import os
@@ -14,8 +15,7 @@ def get_journal_logs() -> str:
     """Return today's journalctl output."""
     result = subprocess.run(  # nosec B603 B607
         ["journalctl", "--since", "today", "--output", "short-iso"],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=True,
         text=True,
     )
@@ -58,17 +58,20 @@ def main() -> None:
         print("📥 Fetching logs...")
         logs = get_journal_logs()
         journal_path = os.getenv(
-            "JOURNAL_OUTPUT_PATH", os.path.expanduser("~/feeditout.com/journal.txt")
+            "JOURNAL_OUTPUT_PATH",
+            os.path.expanduser("~/feeditout.com/journal.txt"),
         )
         print(f"💾 Saving logs to {journal_path}...")
         save_logs_to_file(logs, journal_path)
         print("🧠 Sending prompt to OpenAI...")
         html_report = journal_openai().improve_text(generate_prompt(), "")
         print("📧 Sending email...")
-        today_str = datetime.now().strftime("%Y-%m-%d")
+        today_str = datetime.now().astimezone().strftime("%Y-%m-%d")
         subject = f"System Log Report - {today_str}"
         send_email(
-            subject, html_report, os.getenv("REPORT_EMAIL", "dmz.oneill@gmail.com")
+            subject,
+            html_report,
+            os.getenv("REPORT_EMAIL", "dmz.oneill@gmail.com"),
         )
         print("✅ Done. Email sent.")
     except (

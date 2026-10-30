@@ -13,7 +13,8 @@ import requests
 from binlib import summarize_openai
 
 GITLAB_API_URL = os.getenv(
-    "GITLAB_API_URL", "https://gitlab.cee.redhat.com/api/v4/commits"
+    "GITLAB_API_URL",
+    "https://gitlab.cee.redhat.com/api/v4/commits",
 )
 GITLAB_REPO_URL = os.getenv(
     "GITLAB_REPO_URL",
@@ -39,12 +40,15 @@ def get_gitlab_commits(previous_sha: str) -> list:
     project_id = "automation-analytics/automation-analytics-backend"
     encoded_project_id = quote_plus(project_id)
     gitlab_host = GITLAB_API_URL.split("/api/")[0]
-    url = (
-        f"{gitlab_host}/api/v4/projects/{encoded_project_id}/repository/commits"
-        f"?ref_name=master&since={previous_sha}"
-    )
+    commits_path = f"/api/v4/projects/{encoded_project_id}/repository/commits"
+    url = f"{gitlab_host}{commits_path}?ref_name=master&since={previous_sha}"
     headers = {"PRIVATE-TOKEN": os.getenv("GITLAB_API_TOKEN")}
-    response = requests.get(url, headers=headers, verify=False, timeout=60)  # nosec B501 # nosemgrep
+    response = requests.get(
+        url,
+        headers=headers,
+        verify=False,
+        timeout=60,
+    )  # nosec B501 # nosemgrep
     if response.status_code == 200:
         return response.json()
     raise RuntimeError(f"Failed to get commits: {response.status_code}")
@@ -72,10 +76,13 @@ def update_deploy_clowder_file(new_sha: str) -> None:
 
 def commit_and_push_changes() -> None:
     """Commit the deploy file and open the printed merge-request URL."""
-    today = datetime.today().strftime("%Y-%m-%d")
+    today = datetime.now().astimezone().strftime("%Y-%m-%d")
     commit_message = f"AAP-AA-RELEASE-{today}"
     subprocess.run(["git", "add", DEPLOY_CLOWDER_FILE], check=False)  # nosec B603 B607
-    subprocess.run(["git", "commit", "-m", commit_message], check=False)  # nosec B603 B607
+    subprocess.run(
+        ["git", "commit", "-m", commit_message],
+        check=False,
+    )  # nosec B603 B607
     push_output = subprocess.check_output(  # nosec B603 B607
         ["git", "push", "-u", "origin", "master:" + commit_message],
         stderr=subprocess.STDOUT,

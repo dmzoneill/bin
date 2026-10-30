@@ -72,7 +72,7 @@ class OpenAIProvider:
         if response.status_code == 200:
             return response.json()["data"][0]["embedding"]
         raise OpenAIError(
-            f"Embedding API call failed: {response.status_code} - {response.text}"
+            f"Embedding API call failed: {response.status_code} - {response.text}",
         )
 
     def _post_chat(self, model: str | None, system: str, user: str) -> str:
@@ -91,7 +91,10 @@ class OpenAIProvider:
         }
         try:
             response = requests.post(
-                self.endpoint, json=body, headers=headers, timeout=self.timeout
+                self.endpoint,
+                json=body,
+                headers=headers,
+                timeout=self.timeout,
             )
         except requests.exceptions.RequestException as exc:
             return self._handle_request_error(exc)
@@ -105,10 +108,10 @@ class OpenAIProvider:
 
     def _handle_request_error(self, exc: Exception) -> NoReturn:
         if self.on_error == "exit":
-            print(f"Request failed: {str(exc)}")
+            print(f"Request failed: {exc!s}")
             sys.exit(1)
         if self.on_error == "raise-request":
-            raise OpenAIError(f"Request failed: {str(exc)}") from exc
+            raise OpenAIError(f"Request failed: {exc!s}") from exc
         raise exc
 
 
@@ -138,7 +141,7 @@ def wordpress_openai() -> OpenAIProvider:
 def pinecone_argument_parser() -> argparse.ArgumentParser:
     """Build the parser shared by the Pinecone query scripts."""
     parser = argparse.ArgumentParser(
-        description="Query the Pinecone index and interact with OpenAI."
+        description="Query the Pinecone index and interact with OpenAI.",
     )
     parser.add_argument(
         "pinecone_query",
@@ -174,9 +177,8 @@ def format_pinecone_matches(results: dict[str, Any]) -> str:
     matches_with_info = ""
     for index, result in enumerate(results["matches"]):
         file_info, match_text = _match_text(result)
-        matches_with_info += (
-            f"Match {index + 1}: File: {file_info}\nText: {match_text}\n\n"
-        )
+        header = f"Match {index + 1}: File: {file_info}"
+        matches_with_info += f"{header}\nText: {match_text}\n\n"
     return matches_with_info
 
 
@@ -329,7 +331,7 @@ def _provider(
 ) -> OpenAIProvider:
     api_key = os.getenv("AI_API_KEY")
     if require_key and not api_key:
-        raise EnvironmentError("AI_API_KEY not set in environment.")
+        raise OSError("AI_API_KEY not set in environment.")
     return OpenAIProvider(
         api_key,
         {
@@ -389,11 +391,8 @@ def exception_types(*candidates: Any) -> tuple[type[BaseException], ...]:
     for item in candidates:
         if item in (Exception, BaseException):
             continue
-        if (
-            isinstance(item, type)
-            and issubclass(item, BaseException)
-            and item not in found
-        ):
+        is_exc_type = isinstance(item, type) and issubclass(item, BaseException)
+        if is_exc_type and item not in found:
             found.append(item)
     return tuple(found)
 

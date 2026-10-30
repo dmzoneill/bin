@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Rewrite legacy WordPress code blocks and attach related media."""
 
 import base64
@@ -71,7 +72,9 @@ def _media_suggestions(ai_response: str) -> tuple[str | None, list[str]]:
 
 
 def _featured_image(
-    title: str, image_idea: str | None, unsplash_api_key: str | None
+    title: str,
+    image_idea: str | None,
+    unsplash_api_key: str | None,
 ) -> str | None:
     """Upload an Unsplash image and return its WordPress URL."""
     if not image_idea:
@@ -110,7 +113,12 @@ def _set_featured_media(post: dict, featured_image_url: str | None, title: str) 
             "Content-Type": "image/jpeg",
         }
     )
-    media_response = requests.post(f"{WP_SITE}media", headers=headers, data=img_data, timeout=60)
+    media_response = requests.post(
+        f"{WP_SITE}media",
+        headers=headers,
+        data=img_data,
+        timeout=60,
+    )
     if media_response.status_code == 201:
         media_id = media_response.json().get("id")
         post["featured_media"] = media_id
@@ -135,11 +143,12 @@ image_idea: ...
 youtube_topics: topic for first video, topic for second video
 """
     image_idea, youtube_topics = _media_suggestions(
-        ai_client.improve_text(prompt, content)
+        ai_client.improve_text(prompt, content),
     )
     featured_image_url = _featured_image(title, image_idea, unsplash_api_key)
     enriched_content = append_enrichment_to_post(
-        content, _first_video(youtube_topics, youtube_api_key)
+        content,
+        _first_video(youtube_topics, youtube_api_key),
     )
     post["content"] = {"raw": enriched_content}
     _set_featured_media(post, featured_image_url, title)
@@ -151,13 +160,21 @@ def update_posts(items, ai_provider, post_type: str) -> None:
     for post in items:
         updated_content = process_post(post)
         enriched_post = enrich_post_with_ai(
-            updated_content, ai_provider, UNSPLASH_API_KEY, YOUTUBE_API_KEY
+            updated_content,
+            ai_provider,
+            UNSPLASH_API_KEY,
+            YOUTUBE_API_KEY,
         )
         payload = {"content": enriched_post["content"]["raw"]}
         if "featured_media" in enriched_post:
             payload["featured_media"] = enriched_post["featured_media"]
         update_url = f"{WP_SITE}{post_type}/{post['id']}"
-        result = requests.put(update_url, json=payload, headers=get_auth_header(), timeout=60)
+        result = requests.put(
+            update_url,
+            json=payload,
+            headers=get_auth_header(),
+            timeout=60,
+        )
         title = post["title"]["rendered"]
         if result.status_code == 200:
             print(f"✅ Successfully updated {post_type} ID {post['id']}: {title}")
@@ -174,7 +191,7 @@ def update_content(post_type: str) -> None:
         response = requests.get(url, headers=get_auth_header(), timeout=60)
         if response.status_code != 200:
             print(
-                f"⚠️ Failed to fetch {post_type} (page {page}): {response.status_code}"
+                f"⚠️ Failed to fetch {post_type} (page {page}): {response.status_code}",
             )
             break
         items = response.json()
