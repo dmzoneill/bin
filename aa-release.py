@@ -46,7 +46,7 @@ def get_gitlab_commits(previous_sha: str) -> list:
     response = requests.get(
         url,
         headers=headers,
-        verify=os.getenv("GITLAB_CA_BUNDLE", True),
+        verify=os.getenv("GITLAB_CA_BUNDLE") or True,
         timeout=60,
     )
     if response.status_code == 200:
