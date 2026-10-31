@@ -40,7 +40,7 @@ def get_auth_header() -> dict[str, str]:
 
 def convert_pre_tags(html: str) -> str:
     """Turn legacy ``<pre class="lang:...">`` blocks into Prism code blocks."""
-    pattern = r'<pre\s+[^>]*class=["\']lang:(\w+)["\'][^>]*>(.*?)</pre>'
+    pattern = r'<pre\s[^>]*class=["\']lang:(\w+)["\'][^>]*>(.*?)</pre>'
 
     def repl(match: re.Match[str]) -> str:
         lang = match.group(1).lower()
@@ -186,20 +186,17 @@ def update_content(post_type: str) -> None:
     """Fetch one page of ``post_type`` and update those items."""
     ai_provider = wordpress_openai()
     page = 1
-    while True:
-        url = f"{WP_SITE}{post_type}?per_page=100&page={page}"
-        response = requests.get(url, headers=get_auth_header(), timeout=60)
-        if response.status_code != 200:
-            print(
-                f"⚠️ Failed to fetch {post_type} (page {page}): {response.status_code}",
-            )
-            break
-        items = response.json()
-        if not items:
-            break
-        update_posts(items, ai_provider, post_type)
-        page += 1
+    url = f"{WP_SITE}{post_type}?per_page=100&page={page}"
+    response = requests.get(url, headers=get_auth_header(), timeout=60)
+    if response.status_code != 200:
+        print(
+            f"⚠️ Failed to fetch {post_type} (page {page}): {response.status_code}",
+        )
         return
+    items = response.json()
+    if not items:
+        return
+    update_posts(items, ai_provider, post_type)
 
 
 if __name__ == "__main__":

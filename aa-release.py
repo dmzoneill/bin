@@ -46,9 +46,9 @@ def get_gitlab_commits(previous_sha: str) -> list:
     response = requests.get(
         url,
         headers=headers,
-        verify=False,
+        verify=os.getenv("GITLAB_CA_BUNDLE", True),
         timeout=60,
-    )  # nosec B501 # nosemgrep
+    )
     if response.status_code == 200:
         return response.json()
     raise RuntimeError(f"Failed to get commits: {response.status_code}")
@@ -88,7 +88,7 @@ def commit_and_push_changes() -> None:
         stderr=subprocess.STDOUT,
         text=True,
     )
-    match = re.search(r"(https?://\S+/\S+/merge_requests/\d+)", push_output)
+    match = re.search(r"(https?://\S+/merge_requests/\d+)", push_output)
     if match:
         merge_request_url = match.group(1)
         print(f"Merge request URL: {merge_request_url}")
