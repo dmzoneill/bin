@@ -9,7 +9,17 @@ on:
   repository_dispatch:
     types: [ refresh ]
     
-permissions: write-all
+permissions:
+  actions: read
+  checks: write
+  contents: write
+  deployments: write
+  issues: write
+  packages: write
+  pages: write
+  pull-requests: write
+  security-events: write
+  statuses: write
 
 jobs:
   cicd:

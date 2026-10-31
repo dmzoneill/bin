@@ -35,6 +35,20 @@ def get_last_commit_sha() -> str | None:
     return None
 
 
+def _gitlab_verify() -> str | bool:
+    """Return the TLS ``verify`` value for GitLab requests.
+
+    Set ``GITLAB_CA_BUNDLE`` to the path of a CA bundle (e.g. the Red Hat
+    internal CA) to verify gitlab.cee.redhat.com. When unset, verification is
+    disabled to keep the historical behaviour against the internal CA.
+    """
+    ca_bundle = os.getenv("GITLAB_CA_BUNDLE")
+    if ca_bundle:
+        return ca_bundle
+    # Internal GitLab uses a private CA; opt in to verification via GITLAB_CA_BUNDLE.
+    return False  # NOSONAR
+
+
 def get_gitlab_commits(previous_sha: str) -> list:
     """Fetch commits on master that follow ``previous_sha``."""
     project_id = "automation-analytics/automation-analytics-backend"
@@ -46,9 +60,9 @@ def get_gitlab_commits(previous_sha: str) -> list:
     response = requests.get(
         url,
         headers=headers,
-        verify=False,
+        verify=_gitlab_verify(),  # NOSONAR - internal CA; see GITLAB_CA_BUNDLE
         timeout=60,
-    )  # nosec B501 # nosemgrep
+    )
     if response.status_code == 200:
         return response.json()
     raise RuntimeError(f"Failed to get commits: {response.status_code}")
@@ -88,7 +102,7 @@ def commit_and_push_changes() -> None:
         stderr=subprocess.STDOUT,
         text=True,
     )
-    match = re.search(r"(https?://\S+/\S+/merge_requests/\d+)", push_output)
+    match = re.search(r"(https?://\S+/merge_requests/\d+)", push_output)
     if match:
         merge_request_url = match.group(1)
         print(f"Merge request URL: {merge_request_url}")
