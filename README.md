@@ -9,7 +9,7 @@ My personal scripts and command-line tools, kept in `~/bin`.
 ## Contents
 
 - `aa-release.py`: opens a GitLab merge request that bumps a deploy-clowder ref.
-  Set `GITLAB_CA_BUNDLE` to a CA bundle path to verify TLS against gitlab.cee.redhat.com; when unset, TLS verification is disabled (internal CA).
+  TLS verification is always on. Users of gitlab.cee.redhat.com must set `GITLAB_CA_BUNDLE` (or `REQUESTS_CA_BUNDLE`) to the Red Hat internal CA bundle path.
 - `fancy-git-commit`: writes a commit message from the current diff with the
   Claude CLI and commits.
 - `python-docstring`: normalises Python docstrings.
