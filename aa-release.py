@@ -8,7 +8,8 @@ CA bundle path when talking to it.
 
 import os
 import re
-import subprocess  # nosec B404
+import shutil
+import subprocess
 import sys
 from datetime import datetime
 from urllib.parse import quote_plus
@@ -16,6 +17,10 @@ from urllib.parse import quote_plus
 import requests
 
 from binlib import summarize_openai
+
+# Resolve executables to absolute paths so the calls do not rely on PATH.
+GIT = shutil.which("git") or "/usr/bin/git"
+XDG_OPEN = shutil.which("xdg-open") or "/usr/bin/xdg-open"
 
 GITLAB_API_URL = os.getenv(
     "GITLAB_API_URL",
@@ -83,13 +88,13 @@ def commit_and_push_changes() -> None:
     """Commit the deploy file and open the printed merge-request URL."""
     today = datetime.now().astimezone().strftime("%Y-%m-%d")
     commit_message = f"AAP-AA-RELEASE-{today}"
-    subprocess.run(["git", "add", DEPLOY_CLOWDER_FILE], check=False)  # nosec B603 B607
+    subprocess.run([GIT, "add", DEPLOY_CLOWDER_FILE], check=False)
     subprocess.run(
-        ["git", "commit", "-m", commit_message],
+        [GIT, "commit", "-m", commit_message],
         check=False,
-    )  # nosec B603 B607
-    push_output = subprocess.check_output(  # nosec B603 B607
-        ["git", "push", "-u", "origin", "master:" + commit_message],
+    )
+    push_output = subprocess.check_output(
+        [GIT, "push", "-u", "origin", "master:" + commit_message],
         stderr=subprocess.STDOUT,
         text=True,
     )
@@ -97,7 +102,7 @@ def commit_and_push_changes() -> None:
     if match:
         merge_request_url = match.group(1)
         print(f"Merge request URL: {merge_request_url}")
-        subprocess.run(["xdg-open", merge_request_url], check=False)  # nosec B603 B607
+        subprocess.run([XDG_OPEN, merge_request_url], check=False)
         return
     print("No merge request URL found in push output.")
     sys.exit(1)

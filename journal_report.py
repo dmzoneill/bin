@@ -2,19 +2,23 @@
 """Email an HTML summary of today's systemd journal."""
 
 import os
+import shutil
 import smtplib
-import subprocess  # nosec B404
+import subprocess
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from binlib import OpenAIError, journal_openai
 
+# Resolve journalctl to an absolute path so the call does not rely on PATH.
+JOURNALCTL = shutil.which("journalctl") or "/usr/bin/journalctl"
+
 
 def get_journal_logs() -> str:
     """Return today's journalctl output."""
-    result = subprocess.run(  # nosec B603 B607
-        ["journalctl", "--since", "today", "--output", "short-iso"],
+    result = subprocess.run(
+        [JOURNALCTL, "--since", "today", "--output", "short-iso"],
         capture_output=True,
         check=True,
         text=True,
